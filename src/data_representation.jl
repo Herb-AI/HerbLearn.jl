@@ -50,14 +50,14 @@ function deepcoder_onehot_encoding(io_examples::vector{HerbData.IOExample}, MAX_
         # Pad inputs
         input_vals = ex.in[:x]
         input_type = typeof(input_vals)
-        input_types[i, :] = torch.Tensor([input_type == Int, input_type == Array{Int, 1}])
+        input_types[i, :] = torch.Tensor([input_type == Int, input_type == Array{Int, 1}])  # @TODO generalize this to general symbols
         input_emb = torch.cat([emb_dict[val] for val in input_vals], dim=0)
         pad_input_emb = torch.cat([input_emb, EMB_NULL.repeat(MAX_LEN - length(input_vals), EMBED_DIM)], dim=0)
         inputs[i, :, :] = pad_input_emb
         
         # Pad output
         output_val = ex.out
-        output_type[i, :] = torch.Tensor([typeof(output_val) == Int, typeof(output_val) == Array{Int, 1}]) 
+        output_type[i, :] = torch.Tensor([typeof(output_val) == Int, typeof(output_val) == Array{Int, 1}])  # @TODO see above
         output_emb = torch.cat([emb_dict[val] for val in output_val], dim=0)
         pad_output_emb = torch.cat([output_emb, EMB_NULL.repeat(MAX_LEN - length(output_val), 1)], dim=0) 
         outputs[i, :, :] = pad_output_emb
