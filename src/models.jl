@@ -1,7 +1,7 @@
 """
-A simple model for learning grammar derivation heuristics based on I/O examples
+A simple model with one hidden layer.
 """
-@pydef struct SimpleModel <: torch.nn.Module
+@pydef mutable struct SimpleModel <: torch.nn.Module
     function __init__(self, num_features, num_classes)
         pybuiltin(:super)(SimpleModel, self).__init__()
         self.num_features = num_features
@@ -25,7 +25,7 @@ end
 """
 A simple auto-encoder neural network model
 """
-@pydef struct AutoEncoderModel <: torch.nn.Module
+@pydef mutable struct AutoEncoderModel <: torch.nn.Module
     function __init__(self, num_features, lat_dim)
         pybuiltin(:super)(AutoEncoderModel, self).__init__()
         self.num_features = num_features
@@ -68,7 +68,51 @@ end
 """
 
 """
-@pydef struct Residual <: torch.nn.Module
+@pydef mutable struct DerivationPredNet <: torch.nn.Module
+    function __init__(self, num_IO_features, num_prog_features, num_derivations)
+        println("num_IO_features: $num_IO_features\nnum_prog_features: $num_prog_features\nnum_derivations: $num_derivations")
+        pybuiltin(:super)(DerivationPredNet, self).__init__()
+        self.num_IO_features = num_IO_features
+        self.num_prog_features = num_prog_features
+        self.num_derivations = num_derivations
+
+        lat_dim = 32
+
+        # Init IO encoder
+        self.IO_linear1 = torch.nn.Linear(self.num_IO_features, lat_dim)
+        self.IO_linear2 = torch.nn.Linear(lat_dim, lat_dim)
+
+        # Init prog encoder
+        self.prog_linear1 = torch.nn.Linear(self.num_prog_features, lat_dim)
+        self.prog_linear2 = torch.nn.Linear(lat_dim, lat_dim)
+
+        # Init joint learnin + pred
+        self.joint_linear1 = torch.nn.Linear(lat_dim*2, lat_dim)
+        self.joint_linear2 = torch.nn.Linear(lat_dim, num_derivations)
+
+        self.relu = torch.nn.ReLU()
+        self.sigmoid = torch.nn.Sigmoid()
+    end
+
+    function forward(self, IO_X, prog_X)
+        batch_size = IO_X.shape[1]
+        IO_X = self.relu(self.IO_linear1(IO_X.view(batch_size,-1))) 
+        IO_X = self.relu(self.IO_linear2(IO_X))                
+
+        prog_X = self.relu(self.prog_linear1(prog_X))                
+        prog_X = self.relu(self.prog_linear2(prog_X))                
+
+        x = torch.cat([IO_X, prog_X], dim=1)
+        x = self.relu(self.joint_linear1(x))                
+        x = self.joint_linear2(x)
+        return x.sigmoid()
+    end
+end
+
+"""
+
+"""
+@pydef mutable struct Residual <: torch.nn.Module
     function __init__(self, fn)
         pybuiltin(:super)(Residual, self).__init__()
         self.fn = fn
@@ -83,7 +127,7 @@ end
 """
 
 """
-@pydef struct MLPBlock <: torch.nn.Module
+@pydef mutable struct MLPBlock <: torch.nn.Module
     function __init__(self, in_features, out_features, bias=True, layer_norm=True, dropout=0.3, activation=torch.nn.ReLU)
         pybuiltin(:super)(MLPBlock, self).__init__()
         self.linear = nn.Linear(in_features, out_features, bias)

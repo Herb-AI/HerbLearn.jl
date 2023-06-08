@@ -1,0 +1,9 @@
+name = "HerbLearn"
+uuid = "0fb3ad95-0bb5-4caa-bf40-27fd1b9ba467"
+authors = ["Tilman Hinnerichs <tilman@hinnerichs.com>"]
+version = "0.1.0"
+
+[deps]
+PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
+PyCallUtils = "02651160-e6c3-11e9-0e2a-551f75d9519e"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
