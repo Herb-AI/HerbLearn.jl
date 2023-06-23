@@ -38,13 +38,13 @@ In order to use `HerbLearn` please install the following packages:
 ## How to define a neural network (NN) in Julia using PyTorch:
 
 ```Julia
-@pydef mutable struct Model <: nn.Module
+@pydef mutable struct MyModel <: torch.nn.Module
     function __init__(self, ...)
         pybuiltin(:super)(Model, self).__init__()
-        self.f = ...
+        self.f = torch.nn.Linear(...) 
     end
     function forward(self, x)
-      self.f(x)
+      return self.f(x)
     end
 end
 ```
