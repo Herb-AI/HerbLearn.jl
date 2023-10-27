@@ -1,29 +1,42 @@
-abstract type IOEmbedder end
+abstract type IOEncoder end
+
+mutable struct StarCoderIOEncoder <: IOEncoder
+    EMBED_DIM::Int
+    data_dir::AbstractString
+    pretrain::Bool
+end
+
+mutable struct DeepCoderIOEncoder <: IOEncoder
+    MAX_LEN::Int
+    EMBED_DIM::Int
+end
+
 
 """
 Given a set of I/O examples, this returns an encoding of that. If it is also given a (partial) dictionary, then examples are represented with respect to that dict and the function returns the updated dict.
 """
-function encode_IO_examples(io_examples::Vector{HerbData.IOExample}, embedder::IOEmbedder, dict_partial=Dict{Any, Any}, MAX_LEN=20, EMBED_DIM=20)
+function encode_IO_examples(io_examples::Vector{HerbData.IOExample}, embedder::DeepCoderIOEncoder, dict_partial=Dict{Any, Any})
     dict = Dict()
     if !isempty(dict_partial)
         dict = deepcopy(dict_partial)
     end
 
-    embeddings, emb_dict = embedder.encode(io_examples, MAX_LEN, EMBED_DIM)
-    return embeddings, merge(dict_partial, emb_dict)
+    embeddings = deepcoder_IO_encoding(io_examples, embedder.MAX_LEN, embedder.EMBED_DIM)
+    return embeddings
 end
 
 """
 
 """
-function encode_IO_examples(io_examples::Vector{HerbData.IOExample}, embedder::StarspaceIOEmbedder, model_path::AbstractString, dict_partial=Dict{Any, Any}, MAX_LEN=20, EMBED_DIM=20)
+function encode_IO_examples(io_examples::Vector{HerbData.IOExample}, embedder::StarspaceIOEncoder, dict_partial=Dict{Any, Any})
     dict = Dict()
     if !isempty(dict_partial)
         dict = deepcopy(dict_partial)
     end
 
-    embeddings, emb_dict = embedder.encode(io_examples, model_path, MAX_LEN, EMBED_DIM)
-    return embeddings, merge(dict_partial, emb_dict)
+    embeddings = starspace_IO_encoding(io_examples, embedder.data_dir, embedder.pretrain, 20, 20)
+        
+    return embeddings
 end
 
 
@@ -39,7 +52,6 @@ Description from their appendix:
 @TODO update type checking dynamically
 """
 function deepcoder_IO_encoding(io_examples::Vector{HerbData.IOExample}, MAX_LEN=20, EMBED_DIM=20)
-    println("length: ", length(io_examples))
     # Define constants
     EMB_NULL = torch.rand(EMBED_DIM)  # @TODO Randomly pick NULL embedding?
 
@@ -77,30 +89,39 @@ function deepcoder_IO_encoding(io_examples::Vector{HerbData.IOExample}, MAX_LEN=
         outputs[i-1, :, :] = pad_output_emb
     end
 
-    return torch.concat([inputs, outputs], dim=1), emb_dict  # TODO types are not used yet
-end
-
-mutable struct DeepCoderIOEmbedder <: IOEmbedder
-    encode::Function = deepcoder_IO_encoding
+    return torch.concat([inputs, outputs], dim=1)
 end
 
 """
 
 """
-function starspace_IO_encoding(io_examples::Vector{HerbData.IOExample}, model_filepath="", MAX_LEN=20, EMBED_DIM=20)
-    # Write io_examples to file
+function starcoder_IO_encoding(io_examples::Vector{HerbData.IOExample}, data_dir="/../data/", pretrain=false, MAX_LEN=20, EMBED_DIM=20)
+    # Access the necessary classes from transformers
+    transformers = pyimport("transformers")
+    AutoModelForCausalLM = transformers.AutoModelForCausalLM
+    AutoTokenizer = transformers.AutoTokenizer
 
+    # Define the checkpoint and device
+    checkpoint = "bigcode/starcoderbase" # pretrained on 80 languages
+    # checkpoint = "bigcode/starcoder" # pretrained on Python only
 
-    # Run starspace model on embeddings
+    # device = torch.device(ifelse(nocuda && torch.cuda.is_available(), "cuda", "cpu"))
 
-    # Read predictions from tsv file
-    
-    # Put predictions into torch tensors
+    # Load the pretrained model and tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    # model = AutoModelForCausalLM.from_pretrained(checkpoint)
+    # model = model.to(device)
+ 
+    input_strings = [string(example.in)[findfirst(isequal('('), string(example.in))+1:end-1] for example in io_examples]
+    output_strings = [string(example.out) for example in io_examples]
 
-    # Pickle torch tensors to file
-    error("Starspace encoding not yet implemented.") 
-end
+    # Encode string representation of Dict
+    # input_string = string(example.in)[findfirst(isequal('('), string(example.in))+1:end-1]
+    # output_string = string(example.out)
 
-mutable struct StarspaceIOEmbedder <: IOEmbedder
-    encode::Function = starspace_IO_encoding
+    # @TODO Test whether this works as intended and whether padding is applied
+    input_matrix = tokenizer(input_strings, return_tensors="pt", padding=true)["input_ids"]
+    output_matrix = tokenizer(output_strings, return_tensors="pt", padding=true)["input_ids"]
+
+    return torch.concat([input_matrix, output_matrix], dim=1)
 end
