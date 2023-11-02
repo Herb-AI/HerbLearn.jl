@@ -25,6 +25,7 @@ function encode_IO_examples(io_examples::Vector{HerbData.IOExample}, embedder::D
     return embeddings
 end
 
+
 """
 
 """
@@ -92,36 +93,44 @@ function deepcoder_IO_encoding(io_examples::Vector{HerbData.IOExample}, MAX_LEN=
     return torch.concat([inputs, outputs], dim=1)
 end
 
+
 """
 
 """
-function starcoder_IO_encoding(io_examples::Vector{HerbData.IOExample}, data_dir="/../data/", pretrain=false, MAX_LEN=20, EMBED_DIM=20)
+function starcoder_IO_encoding(io_examples::Vector{HerbData.IOExample}, checkpoint="bigcode/starencoder")
+    device = torch.device(ifelse(nocuda && torch.cuda.is_available(), "cuda", "cpu"))
+
     # Access the necessary classes from transformers
     transformers = pyimport("transformers")
-    AutoModelForCausalLM = transformers.AutoModelForCausalLM
     AutoTokenizer = transformers.AutoTokenizer
 
     # Define the checkpoint and device
-    checkpoint = "bigcode/starcoderbase" # pretrained on 80 languages
-    # checkpoint = "bigcode/starcoder" # pretrained on Python only
-
-    # device = torch.device(ifelse(nocuda && torch.cuda.is_available(), "cuda", "cpu"))
-
+    checkpoint = "bigcode/starencoder"  # gpt-2 based foundation model
+    
     # Load the pretrained model and tokenizer
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-    # model = AutoModelForCausalLM.from_pretrained(checkpoint)
-    # model = model.to(device)
- 
+    encoder = transformers.AutoModelForPreTraining.from_pretrained("bigcode/starencoder")
+
+    
+    # Check if the pad_token is None, and if so, add a special pad token and resize the token embeddings
+    if isnothing(tokenizer.pad_token)
+        tokenizer.add_special_tokens(Dict("pad_token" => "[PAD]"))
+        encoder.resize_token_embeddings(length(tokenizer))
+    end
+
+    # Use string representation of Dict
     input_strings = [string(example.in)[findfirst(isequal('('), string(example.in))+1:end-1] for example in io_examples]
     output_strings = [string(example.out) for example in io_examples]
 
-    # Encode string representation of Dict
-    # input_string = string(example.in)[findfirst(isequal('('), string(example.in))+1:end-1]
-    # output_string = string(example.out)
+    # tokenize 
+    encoded_inputs = tokenizer(input_strings, padding=True, truncation=True, return_tensors="pt")
+    encoded_outputs = tokenizer(output_strings, padding=True, truncation=True, return_tensors="pt")
 
-    # @TODO Test whether this works as intended and whether padding is applied
-    input_matrix = tokenizer(input_strings, return_tensors="pt", padding=true)["input_ids"]
-    output_matrix = tokenizer(output_strings, return_tensors="pt", padding=true)["input_ids"]
+    encoded_inputs = encoder(input_ids=encoded_inputs.input_ids, attention_mask=encoded_inputs.attention_mask)
+    encoded_outputs = encoder(input_ids=encoded_outputs.input_ids, attention_mask=encoded_outputs.attention_mask)
+
+    input_matrix = encoded_inputs.hidden_states[0][:,0,:].view(length(io_examples), -1)
+    output_matrix = encoded_outputs.hidden_states[0][:,0,:].view(length(io_examples), -1)
 
     return torch.concat([input_matrix, output_matrix], dim=1)
 end
