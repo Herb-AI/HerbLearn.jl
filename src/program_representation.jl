@@ -1,33 +1,84 @@
 abstract type ProgramEncoder end
 
-mutable struct ZeroProgramEncoder <: ProgramEncoder end
+mutable struct ZeroProgramEncoder <: ProgramEncoder 
+    embed_dim::Int
+
+    function ZeroProgramEncoder(embed_dim::Int=20)
+        new(embed_dim)
+    end
+end
+
 
 mutable struct GraphProgramEncoder <: ProgramEncoder
     EMBED_DIM::Int
+
+    function GraphProgramEncoder()
+        error("Not implemented yet: GraphProgramEncoder")
+    end
 end
 
-mutable struct TransformerProgramEncoder <: ProgramEncoder
-    EMBED_DIM::Int
+mutable struct StarCoderProgramEncoder <: ProgramEncoder
+    tokenizer
+    embedder
+    embed_dim::Int
+
+    function StarCoderProgramEncoder()
+        transformers = pyimport("transformers")
+        device = torch.device(ifelse(nocuda && torch.cuda.is_available(), "cuda", "cpu"))
+
+        checkpoint = "bigcode/starencoder"
+        tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint).to(device)
+        embedder = transformers.AutoModelForPreTraining.from_pretrained(checkpoint).to(device)
+
+        if isnothing(tokenizer.pad_token)
+            tokenizer.add_special_tokens(Dict("pad_token" => "[PAD]"))
+            embedder.resize_token_embeddings(length(tokenizer))
+        end
+
+        embed_dim = embedder.config.hidden_size
+
+        new(tokenizer, embedder, embed_dim)
+    end
+
 end
+
 
 """
 
 """
-function encode_programs(programs::Vector{RuleNode}, encoder::ProgramEncoder, EMBED_DIM::Int=20)
+function embed_programs(programs::Vector{RuleNode}, encoder::ZeroProgramEncoder)
     return torch.zeros(length(programs), EMBED_DIM)
 end
 
+
+
 """
 
 """
-function encode_programs(programs::Vector{RuleNode}, encoder::GraphProgramEncoder)
-    error("Not implemented yet: $encoder")
+function embed_programs(programs::Vector{RuleNode}, grammar::Grammar, encoder::StarCoderProgramEncoder)
+    device = torch.device(ifelse(nocuda && torch.cuda.is_available(), "cuda", "cpu"))
+
+    input_expr = [string(rulenode2expr(rulenode, grammar)) for rulenode ∈ programs]
+
+    # tokenize string represenations
+    encoded_programs = encoder.tokenizer(input_expr, padding=true, truncation=true, return_tensors="pt").to(device)
+
+    # encode examples using encoder model
+    embeprograms = encoder.embedder(input_ids=encoded_programs["input_ids"], attention_mask=encoded_programs["attention_mask"])
+
+    # take first hidden state of the transformer
+    embeddings = encoded_programs["hidden_states"][0][:, 0, :].view(length(programs), encoder.EMBED_DIM)
+
+    return embeddings
 end
 
+
+
+
 """
 
-"""  
-function encode_programs(programs::Vector{RuleNode}, encoder::TransformerProgramEncoder)
+"""
+function embed_programs(programs::Vector{RuleNode}, encoder::GraphProgramEncoder)
     error("Not implemented yet: $encoder")
 end
 
