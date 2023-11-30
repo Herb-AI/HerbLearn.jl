@@ -21,11 +21,15 @@ end
 using HerbCore
 using HerbData
 using HerbGrammar
-using HerbEvaluation
+using HerbInterpret
+using HerbSearch
+
+using ProgressBars
 
 include("data_generation.jl")
 include("data_representation.jl")
 include("program_representation.jl")
+include("program_representation_utils.jl")
 
 include("learn.jl")
 include("utils.jl")
@@ -34,14 +38,21 @@ export
   torch,
 
   generate_data,
-  pretrain,
+  pretrain_heuristic,
 
-  IOEncoder,
-  StarspaceIOEncoder, 
+  AbstractIOEncoder,
+  AbstractStarCoderIOEncoder,
   DeepCoderIOEncoder,
+  StarEnCoderIOEncoder,
+  StarCoderIOEncoder, 
 
-  ProgramEncoder,
+  AbstractProgramEncoder,
   ZeroProgramEncoder,
   GraphProgramEncoder,
-  TransformerProgramEncoder
+  StarCoderProgramEncoder,
+
+  AbstractProgramDecoder,
+
+  DerivationPredNet,
+  MLP
 end #module HerbLearn

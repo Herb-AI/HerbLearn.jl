@@ -1,15 +1,15 @@
-abstract type ProgramEncoder end
+abstract type AbstractProgramEncoder end
 
-mutable struct ZeroProgramEncoder <: ProgramEncoder 
-    embed_dim::Int
+mutable struct ZeroProgramEncoder <: AbstractProgramEncoder 
+    EMBED_DIM::Int
 
-    function ZeroProgramEncoder(embed_dim::Int=20)
+    function ZeroProgramEncoder(embed_dim::Int=2)
         new(embed_dim)
     end
 end
 
 
-mutable struct GraphProgramEncoder <: ProgramEncoder
+mutable struct GraphProgramEncoder <: AbstractProgramEncoder
     EMBED_DIM::Int
 
     function GraphProgramEncoder()
@@ -17,14 +17,16 @@ mutable struct GraphProgramEncoder <: ProgramEncoder
     end
 end
 
-mutable struct StarCoderProgramEncoder <: ProgramEncoder
+mutable struct StarCoderProgramEncoder <: AbstractProgramEncoder
     tokenizer
     embedder
-    embed_dim::Int
+    EMBED_DIM::Int
 
-    function StarCoderProgramEncoder()
+    encoder
+
+    function StarCoderProgramEncoder(latent_dim::Int, encoder::PyObject=nothing)
         transformers = pyimport("transformers")
-        device = torch.device(ifelse(nocuda && torch.cuda.is_available(), "cuda", "cpu"))
+        device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
 
         checkpoint = "bigcode/starencoder"
         tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint).to(device)
@@ -37,7 +39,11 @@ mutable struct StarCoderProgramEncoder <: ProgramEncoder
 
         embed_dim = embedder.config.hidden_size
 
-        new(tokenizer, embedder, embed_dim)
+        if isnothing(encoder)
+            encoder = MLP([EMBED_DIM, 128])
+        end
+
+        new(tokenizer, embedder, embed_dim, encoder)
     end
 
 end
@@ -46,25 +52,22 @@ end
 """
 
 """
-function embed_programs(programs::Vector{RuleNode}, encoder::ZeroProgramEncoder)
-    return torch.zeros(length(programs), EMBED_DIM)
+function represent_programs(programs::Vector{RuleNode}, encoder::ZeroProgramEncoder)
+    return torch.zeros(length(programs), encoder.EMBED_DIM)
 end
 
-
-
 """
 
 """
-function embed_programs(programs::Vector{RuleNode}, grammar::Grammar, encoder::StarCoderProgramEncoder)
-    device = torch.device(ifelse(nocuda && torch.cuda.is_available(), "cuda", "cpu"))
+function represent_programs(programs::Vector{RuleNode}, grammar::Grammar, encoder::StarCoderProgramEncoder)
+    device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
 
     input_expr = [string(rulenode2expr(rulenode, grammar)) for rulenode ∈ programs]
 
     # tokenize string represenations
     encoded_programs = encoder.tokenizer(input_expr, padding=true, truncation=true, return_tensors="pt").to(device)
 
-    # encode examples using encoder model
-    embeprograms = encoder.embedder(input_ids=encoded_programs["input_ids"], attention_mask=encoded_programs["attention_mask"])
+    encoded_programs = encoder.embedder(input_ids=encoded_programs["input_ids"], attention_mask=encoded_programs["attention_mask"])
 
     # take first hidden state of the transformer
     embeddings = encoded_programs["hidden_states"][0][:, 0, :].view(length(programs), encoder.EMBED_DIM)
@@ -72,24 +75,57 @@ function embed_programs(programs::Vector{RuleNode}, grammar::Grammar, encoder::S
     return embeddings
 end
 
-
-
-
 """
 
 """
-function embed_programs(programs::Vector{RuleNode}, encoder::GraphProgramEncoder)
+function represent_programs(programs::Vector{RuleNode}, encoder::GraphProgramEncoder)
     error("Not implemented yet: $encoder")
 end
 
 
-mutable struct ProgramDecoder end
+encode_programs(programs::Vector{RuleNode}, encoder::ZeroProgramEncoder) = represent_programs(programs, encoder)
 
 """
 
 """
-function decode_programs(program_emb::Vector)
-    error("Decoding programs is not yet supported.")
+function encode_programs(programs::Vector{RuleNode}, encoder::StarCoderProgramEncoder)
+    #@TODO remove represent programs from here?
+
+    embedded_programs = represent_programs(programs, encoder)
+    return encoder.encoder(embedded_programs)
+end
+
+
+"""
+
+"""
+function encode_programs(programs::Vector{RuleNode}, encoder::GraphProgramEncoder)
+    error("Not implemented yet: $encoder")
+end
+
+
+
+abstract type AbstractProgramDecoder end
+
+mutable struct ProgramDecoder <: AbstractProgramDecoder
+    LATENT_DIM::Int
+    decoder_policy
+
+    function ProgramDecoder(latent_dim::Int, num_derivations::Int, decoder_policy::PyObject=nothing)
+        if isnothing(decoder_policy)
+            decoder_policy = MLP([latent_dim, 128, num_derivations])
+        end
+
+        new(latent_dim, decoder_policy)
+    end
+
+end
+
+"""
+
+"""
+function decode_programs(programs_so_far::Vector{RuleNode}, program_emb::Vector, grammar::Grammar)
+    
 end
 
 """
@@ -121,3 +157,4 @@ function deepcoder_labels_for_node(node::RuleNode, grammar::Grammar)
         return retval
     end
 end
+

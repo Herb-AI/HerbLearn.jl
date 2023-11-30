@@ -5,38 +5,32 @@ Pre-training procedure taking care of
 3. evaluation
 of a NN model
 """
-function pretrain(grammar::Grammar,
+function pretrain_heuristic(grammar::Grammar,
     problem::Problem,
-    enumerator::Function,
-    start::Symbol,
-    data_encoder::IOEncoder,
-    program_encoder::ProgramEncoder,
+    data_encoder::AbstractIOEncoder,
+    program_encoder::AbstractProgramEncoder,
+    start::Symbol=:Start,
+    num_programs::Int=100,
     n_epochs::Int=100,
     batch_size::Int=20,
     model_dir::AbstractString="")
 
     # init computing device
-    nocuda = true
-    device = torch.device(ifelse(nocuda && torch.cuda.is_available(), "cuda", "cpu"))
+    device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
     println("Computing device: ", device)
-
-    # generate I/O + program examples
-    max_depth::Int = 7
-    num_programs::Int = 1000
+    flush(stdout)
     
-    iop_data = generate_data(grammar, problem, start, num_programs, enumerator, max_depth=max_depth)
+    iop_data = generate_data(grammar, problem, start, num_programs, max_depth=15)
 
     println("Number of generated IOP samples: ", length(iop_data))
-
-    # prune trivial examples
-    iop_data = iop_data[10:length(iop_data)]
+    flush(stdout)
 
     # encode examples and programs
     io_data = [tup[1] for tup in iop_data]
     program_data = [tup[2] for tup in iop_data]
 
-    io_emb_data = encode_IO_examples(io_data, data_encoder, Dict())
-    program_emb_data = encode_programs(program_data, program_encoder, 1)
+    io_emb_data = encode_IO_examples(io_data, data_encoder)
+    program_emb_data = encode_programs(program_data, program_encoder)
 
     label_data = deepcoder_labels(program_data, grammar)
 
@@ -62,7 +56,8 @@ function pretrain(grammar::Grammar,
 
     # init model
     println("Initializing prediction model...")
-    model = DerivationPredNet(np.prod(io_emb_data.shape[2:length(io_emb_data.shape)]), program_emb_data.shape[2], length(grammar.rules)).to(device)
+    model = DerivationPredNet(np.prod(io_emb_data.shape[2:length(io_emb_data.shape)]), program_emb_data.shape[2], length(grammar.rules))
+    model = torch.nn.DataParallel(model).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
@@ -80,7 +75,7 @@ function pretrain(grammar::Grammar,
     println("Accuracy score:\t", score)
 
     # Save model to disk
-    torch.save(model.state_dict(), string(model_dir, "DeepCoder_model.th"))
+    torch.save(model.state_dict(), string(model_dir, "L2S_model_$(string(typeof(data_encoder)))_$(string(typeof(program_encoder))).th"))
 
     return model
 end
@@ -112,7 +107,7 @@ function train!(model, train_dataloader, valid_dataloader, n_epochs, optimizer, 
             println("Accuracy train/test:\t", train_score, "\t", valid_score)
         end
 
-        GC.gc(false)
+        GC.gc()
     end
 end
 
@@ -122,14 +117,30 @@ function eval(model, testLoader, device)
     @pywith torch.no_grad() begin
         for (i, (io_emb, prog_emb, y)) in enumerate(testLoader)
             (io_emb, prog_emb, y) = io_emb.to(device), prog_emb.to(device), y.to(device)
-            output = torch.round(model(io_emb, prog_emb))
+            output = model(io_emb, prog_emb)
+            output = top_k_ranking(output, 4)
 
             preds = torch.cat([preds, output.to("cpu")], dim=0)
             labels = torch.cat([labels, y.to("cpu")], dim=0)
 
-            i % 10 == 0 && GC.gc(false)
+            GC.gc(false)
         end
-        GC.gc(false)
+        GC.gc()
     end
     return preds, labels
+end
+
+
+"""
+
+"""
+function train_program_autoencoder(grammar::Grammar, programs::Vector{RuleNode}, encoder::AbstractProgramEncoder, decoder::AbstractProgramDecoder)
+    # Step 1: Prepare the program decoding training data
+    training_data = prepare_decoding_training_data(grammar, programs)
+    
+    # Step 2: Encode the programs
+    encoded_programs = encode_programs(training_data[:programs], encoder)
+    
+    # Step 3: Train the decoder policy
+    train_decoder_policy(encoded_programs, training_data[:possible_derivations], decoder)
 end

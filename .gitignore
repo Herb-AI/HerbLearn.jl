@@ -23,6 +23,5 @@ docs/site/
 # environment.
 Manifest.toml
 
-src/Starspace/
-data/
-models/
+src/data/
+src/models/

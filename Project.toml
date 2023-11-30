@@ -4,9 +4,12 @@ authors = ["Tilman Hinnerichs <t.r.hinnerichs@tudelft.nl>"]
 version = "0.1.0"
 
 [deps]
+HerbCore = "2b23ba43-8213-43cb-b5ea-38c12b45bd45"
 HerbData = "495a3ad3-8034-41b3-a087-aacf2fd71098"
-HerbEvaluation = "eb1bf938-813d-4942-ac0f-b4657a683e76"
 HerbGrammar = "4ef9e186-2fe5-4b24-8de7-9f7291f24af7"
+HerbInterpret = "5bbddadd-02c5-4713-84b8-97364418cca7"
+HerbSearch = "3008d8e8-f9aa-438a-92ed-26e9c7b4829f"
+ProgressBars = "49802e3a-d2f1-5c88-81d8-b72133a6f568"
 PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
 PyCallUtils = "02651160-e6c3-11e9-0e2a-551f75d9519e"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"

@@ -128,9 +128,9 @@ end
 
 """
 @pydef mutable struct MLPBlock <: torch.nn.Module
-    function __init__(self, in_features, out_features, bias=True, layer_norm=True, dropout=0.3, activation=torch.nn.ReLU)
+    function __init__(self, in_features, out_features, bias=true, layer_norm=true, dropout=0.3, activation=torch.nn.ReLU)
         pybuiltin(:super)(MLPBlock, self).__init__()
-        self.linear = nn.Linear(in_features, out_features, bias)
+        self.linear = torch.nn.Linear(in_features, out_features, bias)
         self.activation = activation()
         self.layer_norm = layer_norm ? torch.nn.LayerNorm(out_features) : nothing
         self.dropout = dropout ? torch.nn.Dropout(dropout) : nothing
@@ -138,16 +138,43 @@ end
 
     function forward(self, x)
         x = self.activation(self.linear(x))
-        if self.layer_norm
+        if !isnothing(self.layer_norm)
             x = self.layer_norm(x)
         end
-        if self.dropout
+        if !isnothing(self.dropout)
             x = self.dropout(x)
         end
         return x
     end
 end
 
+"""
+
+"""
+@pydef mutable struct MLP <: torch.nn.Module
+    function __init__(self, sizes::Array{Int}, bias=true, layer_norm=true, dropout=0.1, activation=torch.nn.ReLU)
+        pybuiltin(:super)(MLP, self).__init__()
+
+        self.layers = torch.nn.ModuleList()  # Use ModuleList to hold submodules
+        for i in 1:length(sizes)-1
+            in_features = sizes[i]
+            out_features = sizes[i+1]
+            if i == length(sizes)-1
+                block = MLPBlock(in_features, out_features, false, false, 0.0, torch.nn.Identity)
+            else 
+                block = MLPBlock(in_features, out_features, bias, layer_norm, dropout, activation)
+            end
+            self.layers.append(block)
+        end
+    end
+
+    function forward(self, x)
+        for layer in self.layers
+            x = layer(x)
+        end
+        return x
+    end
+end
 
 
 """
