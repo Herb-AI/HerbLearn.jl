@@ -118,12 +118,14 @@ function encode_IO_examples(io_examples::Vector{HerbData.IOExample}, encoder::De
     EMBED_DIM = encoder.EMBED_DIM
     EMB_NULL = encoder.EMB_NULL
 
+    types = [Int, Array{Int, 1}, String]
+
     encoder.emb_dict[0] = EMB_NULL
 
     inputs = torch.Tensor(length(io_examples), MAX_LEN, EMBED_DIM)
-    input_types = torch.Tensor(length(io_examples), 2)
+    input_types = torch.Tensor(length(io_examples), length(types))
     outputs = torch.Tensor(length(io_examples), MAX_LEN, EMBED_DIM)
-    output_type = torch.Tensor(length(io_examples), 2) 
+    output_type = torch.Tensor(length(io_examples), length(types)) 
 
     # Pad arrays and encode inputs and outputs
     for (i, ex) ∈ enumerate(io_examples)
@@ -131,11 +133,10 @@ function encode_IO_examples(io_examples::Vector{HerbData.IOExample}, encoder::De
         input_vals = [val for (key, val) in ex.in]
         output_vals = [ex.out]
 
-        input_type = typeof(input_vals)
-        input_types[i, :] = torch.Tensor([input_type == Int, input_type == Array{Int, 1}])
+        input_types[i-1, :] = torch.Tensor([typeof(input_vals)==type for type in types])
 
         for val ∈ [input_vals; output_vals]
-            if val ∉ keys(emb_dict)
+            if val ∉ keys(encoder.emb_dict)
                 encoder.emb_dict[val] = torch.rand(EMBED_DIM)
             end
         end
@@ -145,13 +146,14 @@ function encode_IO_examples(io_examples::Vector{HerbData.IOExample}, encoder::De
         inputs[i-1, :, :] = pad_input_emb
 
         # Pad output
-        output_type[i-1, :] = torch.Tensor([typeof(output_vals) == Int, typeof(output_vals) == Array{Int, 1}])
+        output_type[i-1, :] = torch.Tensor([typeof(output_vals)==type for type in types])
         output_emb = torch.cat([encoder.emb_dict[val] for val ∈ output_vals], dim=0)
         pad_output_emb = torch.cat([output_emb.view(1,-1), EMB_NULL.view(1,-1).repeat(MAX_LEN - length(output_vals), 1)], dim=0) 
         outputs[i-1, :, :] = pad_output_emb
     end
 
-    return torch.cat([inputs, input_types, outputs, output_type], dim=2)
+    println(inputs.shape, input_types.shape, outputs.shape, output_type.shape)
+    return torch.cat([vec.view(length(io_examples), -1) for vec in [inputs, input_types, outputs, output_type]], dim=1)
 end
 
 

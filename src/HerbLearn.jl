@@ -45,11 +45,13 @@ export
   DeepCoderIOEncoder,
   StarEnCoderIOEncoder,
   StarCoderIOEncoder, 
+  encode_IO_examples,
 
   AbstractProgramEncoder,
   ZeroProgramEncoder,
   GraphProgramEncoder,
   StarCoderProgramEncoder,
+  encode_programs,
 
   AbstractProgramDecoder,
 

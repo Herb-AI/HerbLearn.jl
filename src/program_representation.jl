@@ -17,84 +17,159 @@ mutable struct GraphProgramEncoder <: AbstractProgramEncoder
     end
 end
 
-mutable struct StarCoderProgramEncoder <: AbstractProgramEncoder
+abstract type AbstractStarCoderProgramEncoder <: AbstractProgramEncoder end
+
+mutable struct StarEnCoderProgramEncoder <: AbstractStarCoderProgramEncoder
+    grammar
     tokenizer
-    embedder
-    EMBED_DIM::Int
-
     encoder
+    EMBED_DIM::Int
+    batch_size::Int
+    max_sequence_length::Int
 
-    function StarCoderProgramEncoder(latent_dim::Int, encoder::PyObject=nothing)
+    embedder
+
+    function StarEnCoderProgramEncoder(grammar, latent_dim::Union{Int, Nothing}=nothing, batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1)
         transformers = pyimport("transformers")
         device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
 
         checkpoint = "bigcode/starencoder"
-        tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint).to(device)
-        embedder = transformers.AutoModelForPreTraining.from_pretrained(checkpoint).to(device)
+        tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
+        encoder = transformers.AutoModelForPreTraining.from_pretrained(checkpoint)
+
+        # Prune the model
+        if hasproperty(encoder, :bert) && hasproperty(encoder.bert, :encoder) && hasproperty(encoder.bert.encoder, :layer)
+            encoder.bert.encoder.layer = torch.nn.ModuleList([layer for (i, layer) in enumerate(encoder.bert.encoder.layer) if i<hidden_state]) # in range 1 to 13
+        else
+            throw(ArgumentError("Non-BERT model chosen for BERT-only embedding method."))
+        end
+
+        for param in encoder.parameters() 
+            param.requires_grad = false
+        end
 
         if isnothing(tokenizer.pad_token)
             tokenizer.add_special_tokens(Dict("pad_token" => "[PAD]"))
-            embedder.resize_token_embeddings(length(tokenizer))
+            encoder.resize_token_embeddings(length(tokenizer))
         end
 
-        embed_dim = embedder.config.hidden_size
+        embed_dim = encoder.config.hidden_size * max_sequence_length
 
-        if isnothing(encoder)
-            encoder = MLP([EMBED_DIM, 128])
+        encoder = torch.nn.DataParallel(encoder).to(device)
+
+        # if latent_dim==nothing, don't init and apply dimensionality reduction/embedding function
+        if isnothing(latent_dim)
+            embedder = (x->x)
+        else
+            embedder = MLP([embed_dim, latent_dim])
+            embed_dim = latent_dim
         end
 
-        new(tokenizer, embedder, embed_dim, encoder)
+        new(grammar, tokenizer, encoder, embed_dim, batch_size, max_sequence_length, embedder)
+
     end
-
 end
 
 
 """
 
+Make sure that `model_path` ends with a '/'. 
 """
-function represent_programs(programs::Vector{RuleNode}, encoder::ZeroProgramEncoder)
+mutable struct StarCoderProgramEncoder <: AbstractStarCoderProgramEncoder
+    grammar
+    tokenizer
+    encoder
+    EMBED_DIM::Int
+    batch_size::Int
+    max_sequence_length::Int
+
+    embedder
+
+    function StarCoderIOEncoder(grammar, latent_dim::Union{Int, Nothing}=nothing, batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1, model_path::AbstractString=nothing)
+        transformers = pyimport("transformers")
+
+        checkpoint = "bigcode/starcoder"
+        tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
+
+        if isnothing(model_path)
+            encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto")  # load to GPUs
+        elseif endswith(model_path, '/') && !isdir(model_path)
+            # Load model if not existent
+            encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto") 
+            # Prune model to hidden state
+            encoder.h = torch.nn.ModuleList([layer for (i, layer) in enumerate(encoder.h) if i<hidden_state]) # in range 1 to 40
+            encoder.config.n_layer = hidden_state
+
+        elseif isdir(model_path)
+            # Load encoder from disk
+            encoder = transformers.AutoModel.from_pretrained(model_path, device_map = "auto")  # load to gpu from disk
+        else
+            throw(ArgumentError("Invalid model path selected. Make sure to select a directory."))
+        end
+
+        for param in encoder.parameters() 
+            param.requires_grad = false
+        end
+
+        if !isnothing(model_path) && !isdir(model_path) 
+            # Save model to disk
+            encoder.save_pretrained(model_path)
+        end
+
+        # >>> output_2["last_hidden_state"].size()
+        # torch.Size([1, 15, 6144])
+
+        if isnothing(tokenizer.pad_token)
+            tokenizer.add_special_tokens(Dict("pad_token" => "[PAD]"))
+            encoder.resize_token_embeddings(length(tokenizer))
+        end
+
+        embed_dim = encoder.config.hidden_size * max_sequence_length
+        # if latent_dim==nothing, don't init and apply dimensionality reduction/embedding function
+        if isnothing(latent_dim)
+            embedder = (x->x)
+        else
+            embedder = MLP([embed_dim, latent_dim])
+            embed_dim = latent_dim
+        end
+
+        new(grammar, tokenizer, encoder, embed_dim, batch_size, max_sequence_length, embedder)
+    end
+end
+
+"""
+
+"""
+function encode_programs(programs::Vector{RuleNode}, encoder::ZeroProgramEncoder)
     return torch.zeros(length(programs), encoder.EMBED_DIM)
 end
 
 """
 
 """
-function represent_programs(programs::Vector{RuleNode}, grammar::Grammar, encoder::StarCoderProgramEncoder)
+function encode_programs(programs::Vector{RuleNode}, encoder::AbstractStarCoderProgramEncoder)
     device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
 
-    input_expr = [string(rulenode2expr(rulenode, grammar)) for rulenode ∈ programs]
+    input_expr = [string(rulenode2expr(rulenode, encoder.grammar)) for rulenode ∈ programs]
 
-    # tokenize string represenations
-    encoded_programs = encoder.tokenizer(input_expr, padding=true, truncation=true, return_tensors="pt").to(device)
+    num_batches = ceil(Int, length(programs) / encoder.batch_size)
+    data_batches = [input_expr[(i-1)*encoder.batch_size+1:min(i*encoder.batch_size, end)] for i in 1:num_batches]
 
-    encoded_programs = encoder.embedder(input_ids=encoded_programs["input_ids"], attention_mask=encoded_programs["attention_mask"])
+    return_matrix = []
 
-    # take first hidden state of the transformer
-    embeddings = encoded_programs["hidden_states"][0][:, 0, :].view(length(programs), encoder.EMBED_DIM)
+    @pywith torch.no_grad() begin
+        for batch in data_batches
+            # tokenize string represenations
+            encoded_programs = encoder.tokenizer(batch, padding=true, truncation=true, return_tensors="pt").to(device)
 
-    return embeddings
+            encoded_programs = encoder.encoder(input_ids=encoded_programs["input_ids"], attention_mask=encoded_programs["attention_mask"])["hidden_states"][end].detach()
+
+            push!(return_matrix, encoded_programs.cpu())
+            GC.gc()
+        end
+    end
+    return torch.cat(return_matrix, dim=0) 
 end
-
-"""
-
-"""
-function represent_programs(programs::Vector{RuleNode}, encoder::GraphProgramEncoder)
-    error("Not implemented yet: $encoder")
-end
-
-
-encode_programs(programs::Vector{RuleNode}, encoder::ZeroProgramEncoder) = represent_programs(programs, encoder)
-
-"""
-
-"""
-function encode_programs(programs::Vector{RuleNode}, encoder::StarCoderProgramEncoder)
-    #@TODO remove represent programs from here?
-
-    embedded_programs = represent_programs(programs, encoder)
-    return encoder.encoder(embedded_programs)
-end
-
 
 """
 
@@ -103,6 +178,28 @@ function encode_programs(programs::Vector{RuleNode}, encoder::GraphProgramEncode
     error("Not implemented yet: $encoder")
 end
 
+
+embed_programs(programs::Vector{RuleNode}, encoder::ZeroProgramEncoder) = encode_programs(programs, encoder)
+
+"""
+
+"""
+function embed_programs(programs::Vector{RuleNode}, encoder::AbstractStarCoderProgramEncoder)
+    encoded_programs = encode_programs(programs, encoder)
+    encoded_programs = encoded_programs.view(encoded_programs.size(0), -1)
+
+    # apply embedding function
+    embedded_programs = encoder.embedder(encoded_programs)
+
+    return embedded_programs
+end
+
+"""
+
+"""
+function embed_programs(programs::Vector{RuleNode}, encoder::GraphProgramEncoder)
+    error("Not implemented yet: $encoder")
+end
 
 
 abstract type AbstractProgramDecoder end
