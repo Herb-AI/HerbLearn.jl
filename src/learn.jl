@@ -56,7 +56,7 @@ function pretrain_heuristic(grammar::Grammar,
 
     # init model
     println("Initializing prediction model...")
-    model = DerivationPredNet(np.prod(io_emb_data.shape[2:length(io_emb_data.shape)]), program_emb_data.shape[2], length(grammar.rules))
+    model = DerivationPredNet(np.prod(io_emb_data.shape[2:length(io_emb_data.shape)]), program_emb_data.shape[2], length(grammar.rules), [64, 64])
     model = torch.nn.DataParallel(model).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)

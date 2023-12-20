@@ -152,7 +152,6 @@ function encode_IO_examples(io_examples::Vector{HerbData.IOExample}, encoder::De
         outputs[i-1, :, :] = pad_output_emb
     end
 
-    println(inputs.shape, input_types.shape, outputs.shape, output_type.shape)
     return torch.cat([vec.view(length(io_examples), -1) for vec in [inputs, input_types, outputs, output_type]], dim=1)
 end
 

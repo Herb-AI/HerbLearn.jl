@@ -8,17 +8,12 @@ A simple model with one hidden layer.
         self.num_classes = num_classes
 
         lat_dim = 128
-
-        self.linear1 = torch.nn.Linear(self.num_features, lat_dim)
-        self.linear2 = torch.nn.Linear(lat_dim, self.num_classes)
-        self.relu = torch.nn.ReLU()
-        self.softmax = torch.nn.Softmax(dim=1)
+        self.MLP = MLP([self.num_features, lat_dim, self.num_classes])
     end
 
     function forward(self, x)
-        x = self.relu(self.linear1(x))                
-        x = self.softmax(self.linear2(x))
-        return x
+        x = self.MLP(x)
+        return x.softmax(dim=1)
     end
 end
 
@@ -33,27 +28,20 @@ A simple auto-encoder neural network model
 
         hid_layer_dim = 128
         # Encoding module:
-        self.enc_linear1 = torch.nn.Linear(self.num_features, hid_layer_dim)
-        self.enc_linear2 = torch.nn.Linear(hid_layer_dim, self.lat_dim)
+        self.encoder = MLP([self.num_features, hid_layer_dim, self.lat_dim])
 
         # Decoding module:
-        self.dec_linear1 = torch.nn.Linear(self.lat_dim, hid_layer_dim)
-        self.dec_linear2 = torch.nn.Linear(hid_layer_dim, self.num_features)
-
-        self.relu = torch.nn.ReLU()
-        self.softmax = torch.nn.Softmax(dim=1)
+        self.decoder = MLP([self.lat_dim, hid_layer_dim, self.num_features])
     end
 
     function encode(self, x)
-        x = self.relu(self.enc_linear1(x))                
-        x = self.relu(self.enc_linear2(x))
+        x = self.encoder(x)
         return x
 
     end
 
     function decode(self, x)
-        x = self.relu(self.dec_linear1(x))                
-        x = self.dec_linear2(x).sigmoid()
+        x = self.decoder(x).tanh()
         return x
 
     end
@@ -69,44 +57,64 @@ end
 
 """
 @pydef mutable struct DerivationPredNet <: torch.nn.Module
-    function __init__(self, num_IO_features, num_prog_features, num_derivations)
+    function __init__(self, num_IO_features::Int, num_prog_features::Int, num_derivations::Int, hidden_layer_sizes::Vector{Int}=[])
         println("num_IO_features: $num_IO_features\nnum_prog_features: $num_prog_features\nnum_derivations: $num_derivations")
+
         pybuiltin(:super)(DerivationPredNet, self).__init__()
         self.num_IO_features = num_IO_features
         self.num_prog_features = num_prog_features
         self.num_derivations = num_derivations
 
-        lat_dim = 32
-
-        # Init IO encoder
-        self.IO_linear1 = torch.nn.Linear(self.num_IO_features, lat_dim)
-        self.IO_linear2 = torch.nn.Linear(lat_dim, lat_dim)
-
-        # Init prog encoder
-        self.prog_linear1 = torch.nn.Linear(self.num_prog_features, lat_dim)
-        self.prog_linear2 = torch.nn.Linear(lat_dim, lat_dim)
-
-        # Init joint learnin + pred
-        self.joint_linear1 = torch.nn.Linear(lat_dim*2, lat_dim)
-        self.joint_linear2 = torch.nn.Linear(lat_dim, num_derivations)
-
-        self.relu = torch.nn.ReLU()
-        self.sigmoid = torch.nn.Sigmoid()
+        self.sizes = [[num_IO_features + num_prog_features]; hidden_layer_sizes; num_derivations]
+        self.MLP = MLP(self.sizes)
     end
 
-    function forward(self, IO_X, prog_X)
+    function forward(self, io_x, prog_x)
         batch_size = IO_X.shape[1]
-        IO_X = self.relu(self.IO_linear1(IO_X.view(batch_size,-1))) 
-        IO_X = self.relu(self.IO_linear2(IO_X))                
+        x = torch.cat([io_x.view(batch_size, -1), prog_x])
 
-        prog_X = self.relu(self.prog_linear1(prog_X))                
-        prog_X = self.relu(self.prog_linear2(prog_X))                
+        x = self.MLP(x)
 
-        x = torch.cat([IO_X, prog_X], dim=1)
-        x = self.relu(self.joint_linear1(x))                
-        x = self.joint_linear2(x)
-        return x.sigmoid()
+        # return x.sigmoid()
+        return x.softmax(dim=1)
+   end
+end
+
+
+"""
+
+"""
+@pydef mutable struct SemanticDerivationPredNet <: torch.nn.Module
+    function __init__(self, num_IO_features::Int, num_prog_features::Int, grammar_embeddings, hidden_layer_sizes::Vector{Int}=[])
+        println("num_IO_features: $num_IO_features\nnum_prog_features: $num_prog_features\ngrammar_embeddings: $(grammar_embeddings.shape)")
+
+        assert(typeof(grammar_embeddings.shape) == Tuple{Int, Int})
+
+        pybuiltin(:super)(SemanticDerivationPredNet, self).__init__()
+        self.num_IO_features = num_IO_features
+        self.num_prog_features = num_prog_features
+        self.grammar_embeddings = grammar_embeddings
+
+        self.sizes = [[num_IO_features + num_prog_features]; hidden_layer_sizes; grammar_embeddings.shape[2]]
+        self.MLP = MLP(self.sizes)
     end
+
+    function forward(self, io_x, prog_x)
+        batch_size = io_x.shape[1]
+        x = torch.cat([io_x.view(batch_size, -1), prog_x])
+
+        x = self.MLP(x)
+
+        # calculate cosine similarity
+        x = torch.nn.functional.normalize(x, p=2, dim=1)
+        grammar_embeddings = torch.nn.functional.normalize(self.grammar_embeddings, p=2, dim=1)
+
+        x = torch.matmul(x, grammar_embeddings.T)
+        
+        # return x
+        return x.sigmoid()
+        # return x.softmax(dim=1)
+   end
 end
 
 """

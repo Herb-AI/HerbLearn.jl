@@ -50,10 +50,14 @@ export
   AbstractProgramEncoder,
   ZeroProgramEncoder,
   GraphProgramEncoder,
+  AbstractStarCoderProgramEncoder,
   StarCoderProgramEncoder,
+  StarEnCoderProgramEncoder,
   encode_programs,
+  embed_programs,
 
   AbstractProgramDecoder,
+  decode_programs,
 
   DerivationPredNet,
   MLP
