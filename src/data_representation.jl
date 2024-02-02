@@ -2,13 +2,18 @@ abstract type AbstractIOEncoder end
 
 mutable struct DeepCoderIOEncoder <: AbstractIOEncoder
     MAX_LEN::Int
+    VECTOR_DIM::Int
     EMBED_DIM::Int
     EMB_NULL::PyObject
     emb_dict::Dict
 
-    function DeepCoderIOEncoder(MAX_LEN::Int, EMBED_DIM::Int)
-        EMB_NULL = torch.rand(EMBED_DIM)
-        new(MAX_LEN, EMBED_DIM, EMB_NULL, Dict{Any, PyObject}())
+    types::Array{Any}
+
+    function DeepCoderIOEncoder(MAX_LEN::Int, VECTOR_DIM::Int)
+        EMB_NULL = torch.rand(VECTOR_DIM)
+        types = [Int, Array{Int, 1}, String]
+        EMBED_DIM = 2 * (VECTOR_DIM * MAX_LEN + length(types))
+        new(MAX_LEN, VECTOR_DIM, EMBED_DIM, EMB_NULL, Dict{Any, PyObject}(), types)
     end
 end
 
@@ -114,42 +119,60 @@ Given a set of I/O examples, this returns an encoding of that. If it is also giv
 """
 function encode_IO_examples(io_examples::Vector{HerbData.IOExample}, encoder::DeepCoderIOEncoder)
     # Initialize variables
-    MAX_LEN = encoder.MAX_LEN
-    EMBED_DIM = encoder.EMBED_DIM
+    VECTOR_DIM = encoder.VECTOR_DIM
     EMB_NULL = encoder.EMB_NULL
 
-    types = [Int, Array{Int, 1}, String]
+    types = encoder.types
 
     encoder.emb_dict[0] = EMB_NULL
 
-    inputs = torch.Tensor(length(io_examples), MAX_LEN, EMBED_DIM)
+    inputs = torch.Tensor(length(io_examples), encoder.MAX_LEN, VECTOR_DIM)
     input_types = torch.Tensor(length(io_examples), length(types))
-    outputs = torch.Tensor(length(io_examples), MAX_LEN, EMBED_DIM)
+    outputs = torch.Tensor(length(io_examples), encoder.MAX_LEN, VECTOR_DIM)
     output_type = torch.Tensor(length(io_examples), length(types)) 
 
     # Pad arrays and encode inputs and outputs
     for (i, ex) ∈ enumerate(io_examples)
         # Pad inputs
-        input_vals = [val for (key, val) in ex.in]
-        output_vals = [ex.out]
+        input_vals = [val for (arg, arg_val) in ex.in for val in arg_val]
+        output_vals = [val for val in ex.out]
 
         input_types[i-1, :] = torch.Tensor([typeof(input_vals)==type for type in types])
 
         for val ∈ [input_vals; output_vals]
             if val ∉ keys(encoder.emb_dict)
-                encoder.emb_dict[val] = torch.rand(EMBED_DIM)
+                encoder.emb_dict[val] = torch.rand(VECTOR_DIM)
             end
         end
 
-        input_emb = torch.cat([encoder.emb_dict[val] for val ∈ input_vals], dim=0)
-        pad_input_emb = torch.cat([input_emb.view(1,-1), EMB_NULL.view(1,-1).repeat(MAX_LEN - length(input_vals), 1)], dim=0)
+        input_emb = torch.cat([encoder.emb_dict[val].view(1,-1) for val ∈ input_vals], dim=0)
+        pad_input_emb = nothing
+        if max(length(input_vals), length(output_vals)) > encoder.MAX_LEN
+            new_MAX_LEN = max(length(input_vals), length(output_vals))
+            pad_size = new_MAX_LEN - encoder.MAX_LEN
+            padding = (0, 0, 0, pad_size) 
+            encoder.MAX_LEN = new_MAX_LEN
+            
+            inputs = torch.nn.functional.pad(inputs, padding, "constant", 0)  # Add 0-padding
+            outputs = torch.nn.functional.pad(outputs, padding, "constant", 0)  # Add 0-padding
+        end
+        pad_input_emb = torch.cat([input_emb, EMB_NULL.view(1,-1).repeat(encoder.MAX_LEN - length(input_vals), 1)], dim=0)
         inputs[i-1, :, :] = pad_input_emb
 
         # Pad output
         output_type[i-1, :] = torch.Tensor([typeof(output_vals)==type for type in types])
-        output_emb = torch.cat([encoder.emb_dict[val] for val ∈ output_vals], dim=0)
-        pad_output_emb = torch.cat([output_emb.view(1,-1), EMB_NULL.view(1,-1).repeat(MAX_LEN - length(output_vals), 1)], dim=0) 
-        outputs[i-1, :, :] = pad_output_emb
+        try 
+            output_emb = torch.cat([encoder.emb_dict[val].view(1,-1) for val ∈ output_vals], dim=0)
+            pad_output_emb = torch.cat([output_emb, EMB_NULL.view(1,-1).repeat(encoder.MAX_LEN - length(output_vals), 1)], dim=0) 
+            outputs[i-1, :, :] = pad_output_emb
+        catch ex
+            if ex isa PyCall.PyError
+                continue
+            else
+                println("Unexpected error in encode_IO_examples")
+                throw(error)
+            end
+        end
     end
 
     return torch.cat([vec.view(length(io_examples), -1) for vec in [inputs, input_types, outputs, output_type]], dim=1)

@@ -5,12 +5,14 @@ Pre-training procedure taking care of
 3. evaluation
 of a NN model
 """
-function pretrain_heuristic(grammar::Grammar,
-    problem::Problem,
+function pretrain_heuristic(
+    grammar::Grammar,
+    problems::Vector{Problem},
     data_encoder::AbstractIOEncoder,
     program_encoder::AbstractProgramEncoder,
     start::Symbol=:Start,
     num_programs::Int=100,
+    num_partial_programs::Int=5,
     n_epochs::Int=100,
     batch_size::Int=20,
     model_dir::AbstractString="")
@@ -20,7 +22,7 @@ function pretrain_heuristic(grammar::Grammar,
     println("Computing device: ", device)
     flush(stdout)
     
-    iop_data = generate_data(grammar, problem, start, num_programs, max_depth=15)
+    iop_data = generate_data(grammar, problems, start, num_programs, num_partial_programs; max_depth=7)
 
     println("Number of generated IOP samples: ", length(iop_data))
     flush(stdout)
@@ -31,6 +33,10 @@ function pretrain_heuristic(grammar::Grammar,
 
     io_emb_data = encode_IO_examples(io_data, data_encoder)
     program_emb_data = encode_programs(program_data, program_encoder)
+
+    println("IO data shape: $(io_emb_data.shape)")
+    println("Program data shape: $(program_emb_data.shape)")
+    println("MAX_LEN: $(data_encoder.MAX_LEN)")
 
     label_data = deepcoder_labels(program_data, grammar)
 
@@ -71,8 +77,6 @@ function pretrain_heuristic(grammar::Grammar,
     @time preds, labels = eval(model, test_dataloader, device)
     println("torch.mean(labels):", torch.mean(labels))
     println("torch.mean(preds):", torch.mean(preds))
-    score = metrics.accuracy_score(preds, labels)
-    println("Accuracy score:\t", score)
 
     # Save model to disk
     torch.save(model.state_dict(), string(model_dir, "L2S_model_$(string(typeof(data_encoder)))_$(string(typeof(program_encoder))).th"))
@@ -97,13 +101,13 @@ function train!(model, train_dataloader, valid_dataloader, n_epochs, optimizer, 
         end
         epoch % 100 == 0 && println("Epoch: $epoch\tLoss: $(accu_loss)")  # Probe performance
 
-        if epoch % 500 == 0 
+        if epoch % 100 == 0 
             train_preds, train_labels = eval(model, train_dataloader, device)
             valid_preds, valid_labels = eval(model, valid_dataloader, device)
             println("torch.mean(labels):", torch.mean(valid_labels), torch.mean(valid_preds))
-            
-            train_score = metrics.accuracy_score(train_preds, train_labels)
-            valid_score = metrics.accuracy_score(valid_preds, valid_labels)
+
+            train_score = metrics.accuracy_score(train_preds>0.5, train_labels)
+            valid_score = metrics.accuracy_score(valid_preds>0.5, valid_labels)
             println("Accuracy train/test:\t", train_score, "\t", valid_score)
         end
 
@@ -118,7 +122,6 @@ function eval(model, testLoader, device)
         for (i, (io_emb, prog_emb, y)) in enumerate(testLoader)
             (io_emb, prog_emb, y) = io_emb.to(device), prog_emb.to(device), y.to(device)
             output = model(io_emb, prog_emb)
-            output = top_k_ranking(output, 4)
 
             preds = torch.cat([preds, output.to("cpu")], dim=0)
             labels = torch.cat([labels, y.to("cpu")], dim=0)

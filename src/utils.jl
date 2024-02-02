@@ -16,12 +16,12 @@ end
 
 function top_k_ranking(vec, k=3)
     # Get the indices of the top k elements
-    _, indices = torch.topk(a, k)
+    _, indices = torch.topk(vec, k)
 
-    # Create a zero tensor of the same shape as a
-    topk_tensor = torch.zeros_like(a)
+    # Create a zero tensor of the same shape as vec
+    topk_tensor = torch.zeros_like(vec)
 
     # Set only the top k elements to 1
-    topk_tensor[indices] = 1
+    topk_tensor[indices] = vec[indices]
     return topk_tensor
 end

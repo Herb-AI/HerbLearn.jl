@@ -1,45 +1,36 @@
 """
+    get_partial_programs(programs::Vector{AbstractRuleNode}, grammar::Grammar)
 
+Iterates over all given programs and samples `num_samples` partial programs by calling [`sample_partial_program`](@ref). Returns a vector of partial programs.
 """
-function iterate_partial_programs(programs::Vector{RuleNode}, grammar::Grammar)
-    # Iterate over programs and for each derivation step,
-    # add the program-so-far, the domain and the actual derivation to the data
-    training_pairs = []
-    for program in programs
-        append(training_pairs, get_partial_programs(program, grammar))
-    end
-
-    return training_pairs
-end
-
-
-"""
-    get_partial_programs(node::RuleNode, grammar::Grammar)
-
-Extract all sub-programs from a given program, substituting each sub-tree in turn with a Hole.
-"""
-function get_partial_programs(node::RuleNode, grammar::Grammar)
+function get_partial_programs(programs::Vector{RuleNode}, grammar::Grammar, num_samples::Int=5)
     data = []
-
-    # Recursive function to walk through the program tree and replace subtrees with Holes
-    function walk_and_replace_with_holes(localnode::AbstractRuleNode, path::Vector{Int})
-        if isa(localnode, RuleNode)
-            # Create a Hole that could be replaced by a node with the same index
-            hole = Hole(get_domain(grammar, grammar.childtypes[localnode.ind]))
-            # Create a copy of the program with this node replaced by the Hole
-            subprogram = deepcopy(node)
-            swap_node(subprogram, hole, path)
-            push!(data, (subprogram, hole, localnode.ind))
-
-            # Recurse on children
-            for (i, child) in enumerate(localnode.children)
-                walk_and_replace_with_holes(child, [path; i])
-            end
+    for program in programs
+        for _ in 1:num_samples
+            sampled_program = sample_partial_program(program, grammar)
+            push!(data, sampled_program)
         end
     end
-
-    # Initialize the recursion on the root node
-    walk_and_replace_with_holes(node, [])
-
     return data
+end
+
+"""
+    sample_partial_program(program::RuleNode, grammar::Grammar)
+
+Given a program, samples a random node as a [`HerbGrammar.NodeLoc`](@ref) and substitutes it with a [`HerbCore.Hole`](@ref) of the same type. Return a tuple of the resulting partial program and the substituted correct rule derivation index.
+"""
+function sample_partial_program(program::RuleNode, grammar::Grammar)
+    return_program = deepcopy(program)
+    node_location::NodeLoc = sample(NodeLoc, return_program)
+    parent, i = node_location.parent, node_location.i
+    if i > 0
+        orig_rule = parent.children[i].ind
+        typ = grammar.types[orig_rule]
+        parent.children[i] = Hole(get_domain(grammar, typ))
+        return return_program, orig_rule
+    else
+        typ = grammar.types[return_program.ind]
+        return_program = Hole(get_domain(grammar, typ))
+        return return_program, program.ind
+    end
 end

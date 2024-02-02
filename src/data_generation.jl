@@ -3,15 +3,16 @@ This function 1. takes a vector of problems from the Benchmark directory, 2. sam
 """
 function generate_data(
         grammar::Grammar, 
-        problem::Problem, 
+        problems::Vector{Problem}, 
         start::Symbol,
         num_samples::Int,
-        evaluator::Function=execute_on_examples,
+        part_per_program::Int,
+        evaluator::Function=execute_on_examples;
+        min_depth::Union{Int, Nothing}=3,
         max_depth::Union{Int, Nothing}=20, 
         max_time::Union{Int, Nothing}=nothing,
         max_enumerations::Union{Int, Nothing}=nothing,
-        allow_evaluation_errors::Bool=false
-    )::Vector{Tuple{IOExample, Any}}
+    )::Vector{Tuple{IOExample, RuleNode, AbstractRuleNode, Int}}
     
     # Init checks
     start_time = time()
@@ -19,42 +20,45 @@ function generate_data(
     check_enumerations = max_enumerations !== nothing
 
     # generate symbol table from given grammar
-    symboltable :: SymbolTable = SymbolTable(grammar)
-
+    symboltable::SymbolTable = SymbolTable(grammar)
 
     # Sample programs searching program space
-    gen_IO_data::Vector{Tuple{IOExample, Any}} = Vector{Tuple{IOExample, Expr}}()
-
-    for i ∈ 1:num_samples
-        h = rand(RuleNode, grammar, start, max_depth)
-        expr = rulenode2expr(h, grammar)
-
-        try
-            outputs = evaluator(symboltable, expr, [example.in for example in problem.examples])
-
-            # Align inputs and generated outputs
-            IO_batch = []
-            for (example, output) in zip(problem.examples, outputs)
-                if length(string(output)) == 0
-                    output = "()"
-                end
-                push!(IO_batch, IOExample(example.in, output))
-            end
-            
-            # Repeat expr and align expr with generated IO examples
-            IO_prog_batch = zip(IO_batch, repeat([h], length(problem.examples)))
-            append!(gen_IO_data, collect(IO_prog_batch))
-        catch ex
-            if allow_evaluation_errors
+    gen_IO_data = []
+    for problem in problems
+        i = 1
+        while i <= num_samples
+            h = rand(RuleNode, grammar, start, max_depth)
+            if !isnothing(min_depth) && depth(h) < min_depth
                 continue
-            else
-                throw(ex)
             end
-        end
+            expr = rulenode2expr(h, grammar)
 
-        # Check stopping conditions
-        if check_enumerations && i > max_enumerations || check_time && time() - start_time > max_time
-            return nothing
+            try
+                outputs = [output for output in evaluator(
+                    symboltable, expr, [example.in for example in problem.examples])]
+
+                # Sample partial programs and extend return list
+                for (partial_program, correct_derivation) in get_partial_programs([h], grammar, part_per_program)
+
+                    # Align inputs and generated outputs
+                    for (example, output) in zip(problem.examples, outputs)
+                        if length(string(output)) == 0 && typeof(output) == String
+                            output = "()"
+                        end
+                        io_example = IOExample(example.in, output)
+                        push!(gen_IO_data, (io_example, h, partial_program, correct_derivation))
+                    end
+                end
+            catch ex
+                continue
+            end
+
+            i += 1
+
+            # Check stopping conditions
+            if check_enumerations && i > max_enumerations || check_time && time() - start_time > max_time
+                return nothing
+            end
         end
     end
 

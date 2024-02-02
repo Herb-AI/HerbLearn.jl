@@ -1,85 +1,3 @@
-"""
-A simple model with one hidden layer.
-"""
-@pydef mutable struct SimpleModel <: torch.nn.Module
-    function __init__(self, num_features, num_classes)
-        pybuiltin(:super)(SimpleModel, self).__init__()
-        self.num_features = num_features
-        self.num_classes = num_classes
-
-        lat_dim = 128
-        self.MLP = MLP([self.num_features, lat_dim, self.num_classes])
-    end
-
-    function forward(self, x)
-        x = self.MLP(x)
-        return x.softmax(dim=1)
-    end
-end
-
-"""
-A simple auto-encoder neural network model
-"""
-@pydef mutable struct AutoEncoderModel <: torch.nn.Module
-    function __init__(self, num_features, lat_dim)
-        pybuiltin(:super)(AutoEncoderModel, self).__init__()
-        self.num_features = num_features
-        self.lat_dim = lat_dim
-
-        hid_layer_dim = 128
-        # Encoding module:
-        self.encoder = MLP([self.num_features, hid_layer_dim, self.lat_dim])
-
-        # Decoding module:
-        self.decoder = MLP([self.lat_dim, hid_layer_dim, self.num_features])
-    end
-
-    function encode(self, x)
-        x = self.encoder(x)
-        return x
-
-    end
-
-    function decode(self, x)
-        x = self.decoder(x).tanh()
-        return x
-
-    end
-
-    function forward(self, x)
-        x = self.encode(x)
-        x = self.decode(x)
-        return x
-    end
-end
-
-"""
-
-"""
-@pydef mutable struct DerivationPredNet <: torch.nn.Module
-    function __init__(self, num_IO_features::Int, num_prog_features::Int, num_derivations::Int, hidden_layer_sizes::Vector{Int}=[])
-        println("num_IO_features: $num_IO_features\nnum_prog_features: $num_prog_features\nnum_derivations: $num_derivations")
-
-        pybuiltin(:super)(DerivationPredNet, self).__init__()
-        self.num_IO_features = num_IO_features
-        self.num_prog_features = num_prog_features
-        self.num_derivations = num_derivations
-
-        self.sizes = [[num_IO_features + num_prog_features]; hidden_layer_sizes; num_derivations]
-        self.MLP = MLP(self.sizes)
-    end
-
-    function forward(self, io_x, prog_x)
-        batch_size = IO_X.shape[1]
-        x = torch.cat([io_x.view(batch_size, -1), prog_x])
-
-        x = self.MLP(x)
-
-        # return x.sigmoid()
-        return x.softmax(dim=1)
-   end
-end
-
 
 """
 
@@ -141,7 +59,7 @@ end
         self.linear = torch.nn.Linear(in_features, out_features, bias)
         self.activation = activation()
         self.layer_norm = layer_norm ? torch.nn.LayerNorm(out_features) : nothing
-        self.dropout = dropout ? torch.nn.Dropout(dropout) : nothing
+        self.dropout = !isnothing(dropout) ? torch.nn.Dropout(dropout) : nothing
     end
 
     function forward(self, x)
@@ -184,7 +102,90 @@ end
     end
 end
 
+"""
+A simple model with one hidden layer.
+"""
+@pydef mutable struct SimpleModel <: torch.nn.Module
+    function __init__(self, num_features, num_classes)
+        pybuiltin(:super)(SimpleModel, self).__init__()
+        self.num_features = num_features
+        self.num_classes = num_classes
+
+        lat_dim = 128
+        self.MLP = MLP([self.num_features, lat_dim, self.num_classes])
+    end
+
+    function forward(self, x)
+        x = self.MLP(x)
+        return x.softmax(dim=1)
+    end
+end
+
+"""
+A simple auto-encoder neural network model
+"""
+@pydef mutable struct AutoEncoderModel <: torch.nn.Module
+    function __init__(self, num_features, lat_dim)
+        pybuiltin(:super)(AutoEncoderModel, self).__init__()
+        self.num_features = num_features
+        self.lat_dim = lat_dim
+
+        hid_layer_dim = 128
+        # Encoding module:
+        self.encoder = MLP([self.num_features, hid_layer_dim, self.lat_dim])
+
+        # Decoding module:
+        self.decoder = MLP([self.lat_dim, hid_layer_dim, self.num_features])
+    end
+
+    function encode(self, x)
+        x = self.encoder(x)
+        return x
+
+    end
+
+    function decode(self, x)
+        x = self.decoder(x).tanh()
+        return x
+
+    end
+
+    function forward(self, x)
+        x = self.encode(x)
+        x = self.decode(x)
+        return x
+    end
+end
+
+"""
+
+"""
+@pydef mutable struct DerivationPredNet <: torch.nn.Module
+    function __init__(self, num_IO_features::Int, num_prog_features::Int, num_derivations::Int, hidden_layer_sizes::Vector{Int}=[])
+        pybuiltin(:super)(DerivationPredNet, self).__init__()
+        println("num_IO_features: $num_IO_features\nnum_prog_features: $num_prog_features\nnum_derivations: $num_derivations")
+
+        self.num_IO_features = num_IO_features
+        self.num_prog_features = num_prog_features
+        self.num_derivations = num_derivations
+
+        self.sizes = [[num_IO_features + num_prog_features]; hidden_layer_sizes; num_derivations]
+        self.MLP = MLP(self.sizes)
+    end
+
+    function forward(self, io_x, prog_x)
+        batch_size = io_x.shape[1]
+        x = torch.cat([io_x.view(batch_size, -1), prog_x], dim=1)
+
+        x = self.MLP(x)
+
+        # return x.sigmoid()
+        return x.softmax(dim=1)
+   end
+end
+
 
 """
 @TODO add support for graph representation techniques by implementing a naive autoencoder over ASTs
 """
+
