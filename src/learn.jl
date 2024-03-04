@@ -6,8 +6,8 @@ Pre-training procedure taking care of
 of a NN model
 """
 function pretrain_heuristic(
-    grammar::Grammar,
-    problems::Vector{Problem},
+    grammar::AbstractGrammar,
+    problems::Vector{Problem{Vector{IOExample}}};
     data_encoder::AbstractIOEncoder,
     program_encoder::AbstractProgramEncoder,
     start::Symbol=:Start,
@@ -22,64 +22,52 @@ function pretrain_heuristic(
     println("Computing device: ", device)
     flush(stdout)
     
-    iop_data = generate_data(grammar, problems, start, num_programs, num_partial_programs; max_depth=7)
+    println("Generating data...")
+    gen_problems = generate_data(grammar, problems, start, num_programs, num_partial_programs; max_depth=4)
 
-    println("Number of generated IOP samples: ", length(iop_data))
+    println("Number of generated IOP problems: ", length(gen_problems))
     flush(stdout)
 
-    # encode examples and programs
-    io_data = [tup[1] for tup in iop_data]
-    program_data = [tup[2] for tup in iop_data]
+    println("Encoding data...")
+    io_encodings = encode_IO_examples(gen_problems, data_encoder)
+    println("io_encodings", io_encodings.size())
+    program_encodings = encode_programs(gen_problems, program_encoder)
+    label_data = label_encoding(gen_problems)
 
-    io_emb_data = encode_IO_examples(io_data, data_encoder)
-    program_emb_data = encode_programs(program_data, program_encoder)
-
-    println("IO data shape: $(io_emb_data.shape)")
-    println("Program data shape: $(program_emb_data.shape)")
-    println("MAX_LEN: $(data_encoder.MAX_LEN)")
-
-    label_data = deepcoder_labels(program_data, grammar)
-
-    println("label_data.size(): ", label_data.size())
-    println("label_data.sum(): ", label_data.sum())
-    println("label_data.ratio: ", label_data.sum()/torch.prod(torch.tensor(label_data.size())))
+    label_size = sum([reduce(*, vec.size()) for vec in label_data])
+    label_sum = sum([vec.sum() for vec in label_data])
+    println("label_data.size(): ", label_size)
+    println("label_data.sum(): ", label_sum)
+    println("label_data.ratio: ", label_sum/label_size)
 
     # init train-validation split
-    train_size = floor(Int, 0.8 * length(iop_data))
-    test_size = length(iop_data) - train_size
-    train_indices, test_indices = torch.utils.data.random_split(torch.arange(length(iop_data)), [train_size, test_size])
+    train_size = floor(Int, 0.8 * length(problems))
+    test_size = length(problems) - train_size
+    train_indices, test_indices = torch.utils.data.random_split(torch.arange(length(problems)), [train_size, test_size])
 
     # init dataloaders
-    train_dataloader = torch.utils.data.DataLoader(
-        dataset=[(io_emb_data[i], program_emb_data[i], label_data[i]) for i ∈ train_indices],
-        batch_size=batch_size,
-        shuffle=true)
-
-    test_dataloader = torch.utils.data.DataLoader(
-        dataset=[(io_emb_data[i], program_emb_data[i], label_data[i]) for i ∈ test_indices],
-        batch_size=batch_size,
-        shuffle=false)
-
+    train_dataloader = DataLoader(train_indices, io_encodings, program_encodings, label_data, batch_size, true)
+   
+    test_dataloader = DataLoader(test_indices, io_encodings, program_encodings, label_data, batch_size, false)
+   
     # init model
     println("Initializing prediction model...")
-    model = DerivationPredNet(np.prod(io_emb_data.shape[2:length(io_emb_data.shape)]), program_emb_data.shape[2], length(grammar.rules), [64, 64])
+    model = DerivationPredNet(data_encoder.EMBED_DIM, program_encoder.EMBED_DIM, length(grammar.rules), [32])
+
+    # grammar_embeddings = program_encoder([RuleNode(i) for i in 1:length(grammar.rules)], program_encoder).view(length(grammar.rules), -1)
+    # model = SemanticDerivationPredNet(data_encoder.EMBED_DIM, program_encoder.embed_dim, grammar_embeddings, [64, 64])
+
     model = torch.nn.DataParallel(model).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-    loss_func = BCELoss_class_weighted(torch.ones((2,))/2)
+    weights = torch.tensor([label_sum/label_size, 1-label_sum/label_size]) 
+    println("weights:", weights)
+    loss_func = BCELoss_class_weighted(weights/weights.sum())
 
     # do training within splits
     println("Starting training...")
-    @time train!(model, train_dataloader, test_dataloader,n_epochs, optimizer, device, loss_func)
-
-    # evaluate performance
-    @time preds, labels = eval(model, test_dataloader, device)
-    println("torch.mean(labels):", torch.mean(labels))
-    println("torch.mean(preds):", torch.mean(preds))
-
-    # Save model to disk
-    torch.save(model.state_dict(), string(model_dir, "L2S_model_$(string(typeof(data_encoder)))_$(string(typeof(program_encoder))).th"))
+    @time train!(model, train_dataloader, test_dataloader, n_epochs, optimizer, device, loss_func)
 
     return model
 end
@@ -106,8 +94,8 @@ function train!(model, train_dataloader, valid_dataloader, n_epochs, optimizer, 
             valid_preds, valid_labels = eval(model, valid_dataloader, device)
             println("torch.mean(labels):", torch.mean(valid_labels), torch.mean(valid_preds))
 
-            train_score = metrics.accuracy_score(train_preds>0.5, train_labels)
-            valid_score = metrics.accuracy_score(valid_preds>0.5, valid_labels)
+            train_score = metrics.accuracy_score(train_preds.flatten()>0.5, train_labels.flatten())
+            valid_score = metrics.accuracy_score(valid_preds.flatten()>0.5, valid_labels.flatten())
             println("Accuracy train/test:\t", train_score, "\t", valid_score)
         end
 
@@ -137,7 +125,7 @@ end
 """
 
 """
-function train_program_autoencoder(grammar::Grammar, programs::Vector{RuleNode}, encoder::AbstractProgramEncoder, decoder::AbstractProgramDecoder)
+function train_program_autoencoder(grammar::AbstractGrammar, programs::Vector{RuleNode}, encoder::AbstractProgramEncoder, decoder::AbstractProgramDecoder)
     # Step 1: Prepare the program decoding training data
     training_data = prepare_decoding_training_data(grammar, programs)
     

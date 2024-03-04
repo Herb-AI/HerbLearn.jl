@@ -1,40 +1,3 @@
-
-"""
-
-"""
-@pydef mutable struct SemanticDerivationPredNet <: torch.nn.Module
-    function __init__(self, num_IO_features::Int, num_prog_features::Int, grammar_embeddings, hidden_layer_sizes::Vector{Int}=[])
-        println("num_IO_features: $num_IO_features\nnum_prog_features: $num_prog_features\ngrammar_embeddings: $(grammar_embeddings.shape)")
-
-        assert(typeof(grammar_embeddings.shape) == Tuple{Int, Int})
-
-        pybuiltin(:super)(SemanticDerivationPredNet, self).__init__()
-        self.num_IO_features = num_IO_features
-        self.num_prog_features = num_prog_features
-        self.grammar_embeddings = grammar_embeddings
-
-        self.sizes = [[num_IO_features + num_prog_features]; hidden_layer_sizes; grammar_embeddings.shape[2]]
-        self.MLP = MLP(self.sizes)
-    end
-
-    function forward(self, io_x, prog_x)
-        batch_size = io_x.shape[1]
-        x = torch.cat([io_x.view(batch_size, -1), prog_x])
-
-        x = self.MLP(x)
-
-        # calculate cosine similarity
-        x = torch.nn.functional.normalize(x, p=2, dim=1)
-        grammar_embeddings = torch.nn.functional.normalize(self.grammar_embeddings, p=2, dim=1)
-
-        x = torch.matmul(x, grammar_embeddings.T)
-        
-        # return x
-        return x.sigmoid()
-        # return x.softmax(dim=1)
-   end
-end
-
 """
 
 """
@@ -175,17 +138,48 @@ end
 
     function forward(self, io_x, prog_x)
         batch_size = io_x.shape[1]
-        x = torch.cat([io_x.view(batch_size, -1), prog_x], dim=1)
+        x = torch.cat([io_x, prog_x], dim=1)
 
         x = self.MLP(x)
 
-        # return x.sigmoid()
-        return x.softmax(dim=1)
+        return x.sigmoid()
+        # return x.softmax(dim=1)
    end
 end
 
 
 """
-@TODO add support for graph representation techniques by implementing a naive autoencoder over ASTs
-"""
 
+"""
+@pydef mutable struct SemanticDerivationPredNet <: torch.nn.Module
+    function __init__(self, num_IO_features::Int, num_prog_features::Int, grammar_embeddings, hidden_layer_sizes::Vector{Int}=[])
+        println("num_IO_features: $num_IO_features\nnum_prog_features: $num_prog_features\ngrammar_embeddings: $(grammar_embeddings.shape)")
+
+        assert(typeof(grammar_embeddings.shape) == Tuple{Int, Int})
+
+        pybuiltin(:super)(SemanticDerivationPredNet, self).__init__()
+        self.num_IO_features = num_IO_features
+        self.num_prog_features = num_prog_features
+        self.grammar_embeddings = grammar_embeddings
+
+        self.sizes = [[num_IO_features + num_prog_features]; hidden_layer_sizes; grammar_embeddings.shape[2]]
+        self.MLP = MLP(self.sizes)
+    end
+
+    function forward(self, io_x, prog_x)
+        batch_size = io_x.shape[1]
+        x = torch.cat([io_x.view(batch_size, -1), prog_x])
+
+        x = self.MLP(x)
+
+        # calculate cosine similarity
+        x = torch.nn.functional.normalize(x, p=2, dim=1)
+        grammar_embeddings = torch.nn.functional.normalize(self.grammar_embeddings, p=2, dim=1)
+
+        x = torch.matmul(x, grammar_embeddings.T)
+        
+        # return x
+        return x.sigmoid()
+        # return x.softmax(dim=1)
+   end
+end

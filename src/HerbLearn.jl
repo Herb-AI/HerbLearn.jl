@@ -3,6 +3,9 @@ module HerbLearn
 using PyCall, PyCallUtils
 using Random
 
+using JLD
+using ProgressBars
+
 const global torch = pyimport("torch")
 const global np = pyimport("numpy")
 const global nn = pyimport("torch.nn")
@@ -19,17 +22,16 @@ function __init__()
 end
 
 using HerbCore
-using HerbData
 using HerbGrammar
 using HerbInterpret
 using HerbSearch
-
-using ProgressBars
+using HerbSpecification
 
 include("data_generation.jl")
 include("data_representation.jl")
 include("program_representation.jl")
 include("program_representation_utils.jl")
+include("data_loaders.jl")
 
 include("learn.jl")
 include("utils.jl")

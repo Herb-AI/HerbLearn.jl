@@ -53,7 +53,7 @@ mutable struct StarEnCoderProgramEncoder <: AbstractStarCoderProgramEncoder
             encoder.resize_token_embeddings(length(tokenizer))
         end
 
-        embed_dim = encoder.config.hidden_size * max_sequence_length
+        embed_dim = encoder.config.hidden_size
 
         encoder = torch.nn.DataParallel(encoder).to(device)
 
@@ -140,9 +140,22 @@ end
 """
 
 """
+function encode_programs(generated_problems::Vector{GeneratedProblem}, encoder::AbstractProgramEncoder)
+    return_vec = []
+    for gen_problem in generated_problems
+        partial_programs = [tup[1] for tup in gen_problem.partial_programs]
+        push!(return_vec, encode_programs(partial_programs, encoder))
+    end
+    return return_vec
+end
+
+"""
+
+"""
 function encode_programs(programs::Vector{<:AbstractRuleNode}, encoder::ZeroProgramEncoder)
     return torch.zeros(length(programs), encoder.EMBED_DIM)
 end
+
 
 """
 
@@ -161,8 +174,11 @@ function encode_programs(programs::Vector{<:AbstractRuleNode}, encoder::Abstract
         for batch in data_batches
             # tokenize string represenations
             encoded_programs = encoder.tokenizer(batch, padding=true, truncation=true, return_tensors="pt").to(device)
-
             encoded_programs = encoder.encoder(input_ids=encoded_programs["input_ids"], attention_mask=encoded_programs["attention_mask"])["hidden_states"][end].detach()
+
+            encoded_programs = encoded_programs.mean(dim=1)
+
+            # encoded_programs = encoded_programs.view(encoded_programs.size(0), -1)
 
             push!(return_matrix, encoded_programs.cpu())
             GC.gc()
@@ -221,14 +237,14 @@ end
 """
 
 """
-function decode_programs(programs_so_far::Vector{<:AbstractRuleNode}, program_emb::Vector, grammar::Grammar)
+function decode_programs(programs_so_far::Vector{<:AbstractRuleNode}, program_emb::Vector, grammar::AbstractGrammar)
     error("Not implemented yet: decode_programs")
 end
 
 """
 Function to generate labels in a DeepCoder fashion, i.e. mapping each program to a binary encoding whether a derivation was used in that program or not. Programs need to be given as a vector of HerbGrammar.AbstractRuleNode.
 """
-function deepcoder_labels(programs::Vector{<:AbstractRuleNode}, grammar::Grammar)
+function deepcoder_labels(programs::Vector{<:AbstractRuleNode}, grammar::AbstractGrammar)
     labels = torch.zeros(length(programs), length(grammar.rules))
     for (i, program) ∈ enumerate(programs)
         labels[i-1, :] = deepcoder_labels_for_node(program, grammar)
@@ -240,7 +256,7 @@ end
 """
 Recursively computes DeepCoder encoding for a program given the root (Abstract)RuleNode.
 """
-function deepcoder_labels_for_node(node::AbstractRuleNode, grammar::Grammar)
+function deepcoder_labels_for_node(node::AbstractRuleNode, grammar::AbstractGrammar)
     retval = torch.zeros(length(grammar.rules))
 
     retval[node.ind-1] = 1
@@ -255,3 +271,21 @@ function deepcoder_labels_for_node(node::AbstractRuleNode, grammar::Grammar)
     end
 end
 
+
+function label_encoding(problems::Vector{GeneratedProblem})
+    return_vec = []
+    for gen_problem in problems
+        correct_derivations = [tup[2] for tup in gen_problem.partial_programs]
+        push!(return_vec, label_encoding(correct_derivations, gen_problem.grammar))
+    end
+    return return_vec
+end
+
+
+function label_encoding(correct_derivations, grammar)
+    label_vec = torch.zeros(length(correct_derivations), length(grammar.rules))
+    for (i, correct_derivation) in enumerate(correct_derivations)
+        label_vec[i-1][correct_derivation-1] = 1
+    end
+    return label_vec
+end

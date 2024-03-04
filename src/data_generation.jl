@@ -1,18 +1,25 @@
+mutable struct GeneratedProblem
+    io_examples::Vector{IOExample}
+    program::AbstractRuleNode
+    partial_programs::Vector{Tuple{AbstractRuleNode, Int}}
+    grammar::AbstractGrammar
+end
+
 """
-This function 1. takes a vector of problems from the Benchmark directory, 2. samples programs from the grammar, 3. applies the generated programs on the inputs and 4. returns I/O samples + the program leading from input to output. This will generate `length(problem.examples) × num_samples` data points minus the number of samples+programs that failed on execution.+
+This function 1. takes a vector of problems from the Benchmark directory, 2. samples programs from the grammar, 3. applies the generated programs on the inputs and 4. returns I/O samples + the program leading from input to output. This will generate `length(problem.spec) × num_samples` data points minus the number of samples+programs that failed on execution.+
 """
 function generate_data(
-        grammar::Grammar, 
-        problems::Vector{Problem}, 
+        grammar::AbstractGrammar, 
+        problems::Vector{Problem{Vector{IOExample}}}, 
         start::Symbol,
         num_samples::Int,
-        part_per_program::Int,
-        evaluator::Function=execute_on_examples;
-        min_depth::Union{Int, Nothing}=3,
+        parts_per_program::Int,
+        evaluator::Function=HerbInterpret.execute_on_input;
+        min_depth::Union{Int, Nothing}=2,
         max_depth::Union{Int, Nothing}=20, 
         max_time::Union{Int, Nothing}=nothing,
         max_enumerations::Union{Int, Nothing}=nothing,
-    )::Vector{Tuple{IOExample, RuleNode, AbstractRuleNode, Int}}
+    )::Vector{GeneratedProblem}
     
     # Init checks
     start_time = time()
@@ -24,7 +31,7 @@ function generate_data(
 
     # Sample programs searching program space
     gen_IO_data = []
-    for problem in problems
+    for problem in ProgressBar(problems)
         i = 1
         while i <= num_samples
             h = rand(RuleNode, grammar, start, max_depth)
@@ -34,21 +41,28 @@ function generate_data(
             expr = rulenode2expr(h, grammar)
 
             try
-                outputs = [output for output in evaluator(
-                    symboltable, expr, [example.in for example in problem.examples])]
+                # This assumes that every generated program is executable on every single input
+                outputs = [output for output in [evaluator(
+                    symboltable, expr, example.in) for example in problem.spec]]
 
-                # Sample partial programs and extend return list
-                for (partial_program, correct_derivation) in get_partial_programs([h], grammar, part_per_program)
-
-                    # Align inputs and generated outputs
-                    for (example, output) in zip(problem.examples, outputs)
-                        if length(string(output)) == 0 && typeof(output) == String
-                            output = "()"
-                        end
-                        io_example = IOExample(example.in, output)
-                        push!(gen_IO_data, (io_example, h, partial_program, correct_derivation))
+                io_examples = []
+                # Align inputs and generated outputs
+                for (example, output) in zip(problem.spec, outputs)
+                    if length(string(output)) == 0 && typeof(output) == String
+                        output = "()"
                     end
+                    if typeof(output) == String && typeof(example.in) == String && length(output) > 2*length(example.in)
+                        throw(BoundsError)
+                    end
+
+                    io_example = IOExample(example.in, output)
+                    push!(io_examples, io_example)
+                    # push!(gen_IO_data, (io_example, h, partial_program, correct_derivation))
                 end
+
+                gen_problem = GeneratedProblem(io_examples, h, get_partial_programs([h], grammar, parts_per_program), grammar)
+                
+                push!(gen_IO_data, gen_problem)
             catch ex
                 continue
             end

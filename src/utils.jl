@@ -2,7 +2,7 @@
 
 """
 function BCELoss_class_weighted(weights)
-    if isempty(weights)
+    if isnothing(weights)
         weights = torch.ones((2,))/2
     end
     function loss(input, target)
