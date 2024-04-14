@@ -1,7 +1,9 @@
 module HerbLearn
 
-using PyCall, PyCallUtils
+using PyCall
 using Random
+
+using Serialization
 
 using JLD
 using ProgressBars
@@ -29,6 +31,7 @@ using HerbSpecification
 
 include("data_generation.jl")
 include("data_representation.jl")
+include("models.jl")
 include("program_representation.jl")
 include("program_representation_utils.jl")
 include("data_loaders.jl")
@@ -42,11 +45,16 @@ export
   generate_data,
   pretrain_heuristic,
 
+  GeneratedProblem,
+  ProblemGrammarPair,
+
   AbstractIOEncoder,
   AbstractStarCoderIOEncoder,
   DeepCoderIOEncoder,
   StarEnCoderIOEncoder,
   StarCoderIOEncoder, 
+  StarCoder2IOEncoder,
+
   encode_IO_examples,
 
   AbstractProgramEncoder,
@@ -55,12 +63,15 @@ export
   AbstractStarCoderProgramEncoder,
   StarCoderProgramEncoder,
   StarEnCoderProgramEncoder,
+  StarCoder2ProgramEncoder,
   encode_programs,
+  encode_grammar,
   embed_programs,
 
   AbstractProgramDecoder,
   decode_programs,
 
   DerivationPredNet,
+  SemanticDerivationPredNet,
   MLP
 end #module HerbLearn

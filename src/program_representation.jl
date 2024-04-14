@@ -20,7 +20,6 @@ end
 abstract type AbstractStarCoderProgramEncoder <: AbstractProgramEncoder end
 
 mutable struct StarEnCoderProgramEncoder <: AbstractStarCoderProgramEncoder
-    grammar
     tokenizer
     encoder
     EMBED_DIM::Int
@@ -29,7 +28,7 @@ mutable struct StarEnCoderProgramEncoder <: AbstractStarCoderProgramEncoder
 
     embedder
 
-    function StarEnCoderProgramEncoder(grammar, latent_dim::Union{Int, Nothing}=nothing, batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1)
+    function StarEnCoderProgramEncoder(latent_dim::Union{Int, Nothing}=nothing, batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1)
         transformers = pyimport("transformers")
         device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
 
@@ -65,7 +64,7 @@ mutable struct StarEnCoderProgramEncoder <: AbstractStarCoderProgramEncoder
             embed_dim = latent_dim
         end
 
-        new(grammar, tokenizer, encoder, embed_dim, batch_size, max_sequence_length, embedder)
+        new(tokenizer, encoder, embed_dim, batch_size, max_sequence_length, embedder)
 
     end
 end
@@ -76,7 +75,6 @@ end
 Make sure that `model_path` ends with a '/'. 
 """
 mutable struct StarCoderProgramEncoder <: AbstractStarCoderProgramEncoder
-    grammar
     tokenizer
     encoder
     EMBED_DIM::Int
@@ -85,13 +83,13 @@ mutable struct StarCoderProgramEncoder <: AbstractStarCoderProgramEncoder
 
     embedder
 
-    function StarCoderIOEncoder(grammar, latent_dim::Union{Int, Nothing}=nothing, batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1, model_path::AbstractString=nothing)
+    function StarCoderProgramEncoder(latent_dim::Union{Int, Nothing}=nothing, batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1, model_path::AbstractString="")
         transformers = pyimport("transformers")
 
         checkpoint = "bigcode/starcoder"
         tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
 
-        if isnothing(model_path)
+        if isemtpy(model_path)
             encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto")  # load to GPUs
         elseif endswith(model_path, '/') && !isdir(model_path)
             # Load model if not existent
@@ -111,7 +109,7 @@ mutable struct StarCoderProgramEncoder <: AbstractStarCoderProgramEncoder
             param.requires_grad = false
         end
 
-        if !isnothing(model_path) && !isdir(model_path) 
+        if !isempty(model_path) && !isdir(model_path) 
             # Save model to disk
             encoder.save_pretrained(model_path)
         end
@@ -133,20 +131,104 @@ mutable struct StarCoderProgramEncoder <: AbstractStarCoderProgramEncoder
             embed_dim = latent_dim
         end
 
-        new(grammar, tokenizer, encoder, embed_dim, batch_size, max_sequence_length, embedder)
+        new(tokenizer, encoder, embed_dim, batch_size, max_sequence_length, embedder)
     end
 end
+
+
+"""
+
+Make sure that `model_path` ends with a '/'. 
+"""
+mutable struct StarCoder2ProgramEncoder <: AbstractStarCoderProgramEncoder
+    tokenizer
+    encoder
+    EMBED_DIM::Int
+    batch_size::Int
+    max_sequence_length::Int
+
+    embedder
+
+    function StarCoder2ProgramEncoder(latent_dim::Union{Int, Nothing}=nothing, batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1, model_path::AbstractString="")
+        transformers = pyimport("transformers")
+
+        checkpoint = "bigcode/starcoder2-15b"
+        quantization_config = transformers.BitsAndBytesConfig(load_in_8bit=True)
+        tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
+
+        if isempty(model_path)
+            encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto", quantization_config=quantization_config)  # load to GPUs
+        elseif endswith(model_path, '/') && !isdir(model_path)
+            # Load model if not existent
+            encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto", quantization_config=quantization_config) 
+            # Prune model to hidden state
+            encoder.h = torch.nn.ModuleList([layer for (i, layer) in enumerate(encoder.h) if i<hidden_state]) # in range 1 to 40
+            encoder.config.n_layer = hidden_state
+
+        elseif isdir(model_path)
+            # Load encoder from disk
+            encoder = transformers.AutoModel.from_pretrained(model_path, device_map = "auto", quantization_config=quantization_config)  # load to gpu from disk
+        else
+            throw(ArgumentError("Invalid model path selected. Make sure to select a directory."))
+        end
+
+        for param in encoder.parameters() 
+            param.requires_grad = false
+        end
+
+        if !isempty(model_path) && !isdir(model_path) 
+            # Save model to disk
+            encoder.save_pretrained(model_path)
+        end
+
+        if isnothing(tokenizer.pad_token)
+            tokenizer.add_special_tokens(Dict("pad_token" => "[PAD]"))
+            encoder.resize_token_embeddings(length(tokenizer))
+        end
+
+        embed_dim = encoder.config.hidden_size * max_sequence_length
+        # if latent_dim==nothing, don't init and apply dimensionality reduction/embedding function
+        if isnothing(latent_dim)
+            embedder = (x->x)
+        else
+            embedder = MLP([embed_dim, latent_dim])
+            embed_dim = latent_dim
+        end
+
+        new(tokenizer, encoder, embed_dim, batch_size, max_sequence_length, embedder)
+    end
+end
+
+
 
 """
 
 """
 function encode_programs(generated_problems::Vector{GeneratedProblem}, encoder::AbstractProgramEncoder)
     return_vec = []
-    for gen_problem in generated_problems
+    for gen_problem in ProgressBar(generated_problems)
         partial_programs = [tup[1] for tup in gen_problem.partial_programs]
-        push!(return_vec, encode_programs(partial_programs, encoder))
+        input_expr = [string(rulenode2expr(rulenode, gen_problem.grammar)) for rulenode ∈ partial_programs]
+        push!(return_vec, encode_programs(input_expr, encoder))
     end
     return return_vec
+end
+
+"""
+
+"""
+function encode_grammar(generated_problems::Vector{GeneratedProblem}, encoder::AbstractProgramEncoder)
+    return_vec = []
+
+    for gen_problem in ProgressBar(generated_problems)
+        push!(return_vec, encode_grammar(gen_problem.grammar, encoder))
+    end
+    return return_vec
+end
+
+function encode_grammar(grammar::AbstractGrammar, encoder::AbstractProgramEncoder)
+    rules = [string(rule) for rule in grammar.rules]
+    return encode_programs(rules, encoder)
 end
 
 """
@@ -156,17 +238,18 @@ function encode_programs(programs::Vector{<:AbstractRuleNode}, encoder::ZeroProg
     return torch.zeros(length(programs), encoder.EMBED_DIM)
 end
 
+function encode_programs(programs::Vector{<:AbstractString}, encoder::ZeroProgramEncoder)
+    return torch.zeros(length(programs), encoder.EMBED_DIM)
+end
 
 """
 
 """
-function encode_programs(programs::Vector{<:AbstractRuleNode}, encoder::AbstractStarCoderProgramEncoder)
+function encode_programs(programs::Vector{<:AbstractString}, encoder::AbstractStarCoderProgramEncoder)
     device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
 
-    input_expr = [string(rulenode2expr(rulenode, encoder.grammar)) for rulenode ∈ programs]
-
     num_batches = ceil(Int, length(programs) / encoder.batch_size)
-    data_batches = [input_expr[(i-1)*encoder.batch_size+1:min(i*encoder.batch_size, end)] for i in 1:num_batches]
+    data_batches = [programs[(i-1)*encoder.batch_size+1:min(i*encoder.batch_size, end)] for i in 1:num_batches]
 
     return_matrix = []
 
@@ -244,14 +327,14 @@ end
 """
 Function to generate labels in a DeepCoder fashion, i.e. mapping each program to a binary encoding whether a derivation was used in that program or not. Programs need to be given as a vector of HerbGrammar.AbstractRuleNode.
 """
-function deepcoder_labels(programs::Vector{<:AbstractRuleNode}, grammar::AbstractGrammar)
-    labels = torch.zeros(length(programs), length(grammar.rules))
-    for (i, program) ∈ enumerate(programs)
-        labels[i-1, :] = deepcoder_labels_for_node(program, grammar)
+function deepcoder_labels(gen_problems::Vector{GeneratedProblem})
+    return_vec = []
+    for gen_problem in gen_problems
+        @assert length(gen_problem.partial_programs) == 1
+        push!(return_vec, torch.unsqueeze(deepcoder_labels_for_node(gen_problem.program, gen_problem.grammar), dim=0))
     end
-    return labels
+    return return_vec
 end
-
 
 """
 Recursively computes DeepCoder encoding for a program given the root (Abstract)RuleNode.
@@ -283,6 +366,7 @@ end
 
 
 function label_encoding(correct_derivations, grammar)
+    # Size: #num_sampled_programs x #rules
     label_vec = torch.zeros(length(correct_derivations), length(grammar.rules))
     for (i, correct_derivation) in enumerate(correct_derivations)
         label_vec[i-1][correct_derivation-1] = 1

@@ -12,8 +12,8 @@ HerbSpecification = "6d54aada-062f-46d8-85cf-a1ceaf058a06"
 JLD = "4138dd39-2aa7-5051-a626-17a0bb65d9c8"
 ProgressBars = "49802e3a-d2f1-5c88-81d8-b72133a6f568"
 PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
-PyCallUtils = "02651160-e6c3-11e9-0e2a-551f75d9519e"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 
 [compat]
 HerbCore = "^0.2.0"

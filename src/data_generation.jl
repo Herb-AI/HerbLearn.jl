@@ -5,12 +5,17 @@ mutable struct GeneratedProblem
     grammar::AbstractGrammar
 end
 
+mutable struct ProblemGrammarPair
+    problem::Problem{Vector{IOExample}}
+    grammar::AbstractGrammar
+end
+
+
 """
 This function 1. takes a vector of problems from the Benchmark directory, 2. samples programs from the grammar, 3. applies the generated programs on the inputs and 4. returns I/O samples + the program leading from input to output. This will generate `length(problem.spec) × num_samples` data points minus the number of samples+programs that failed on execution.+
 """
 function generate_data(
-        grammar::AbstractGrammar, 
-        problems::Vector{Problem{Vector{IOExample}}}, 
+        problem_grammar_pairs::Vector{ProblemGrammarPair},
         start::Symbol,
         num_samples::Int,
         parts_per_program::Int,
@@ -26,12 +31,12 @@ function generate_data(
     check_time = max_time !== nothing
     check_enumerations = max_enumerations !== nothing
 
-    # generate symbol table from given grammar
-    symboltable::SymbolTable = SymbolTable(grammar)
-
     # Sample programs searching program space
     gen_IO_data = []
-    for problem in ProgressBar(problems)
+    for pair in ProgressBar(problem_grammar_pairs)
+        problem, grammar = pair.problem, pair.grammar
+        # generate symbol table from given grammar
+        symboltable::SymbolTable = SymbolTable(grammar)
         i = 1
         while i <= num_samples
             h = rand(RuleNode, grammar, start, max_depth)
@@ -78,3 +83,11 @@ function generate_data(
 
     return gen_IO_data
 end
+
+function generate_data(
+    problem_grammar_pairs::Tuple{Vector{Problem{Vector{IOExample}}}, <:AbstractGrammar},
+    args...; kwargs...)::Vector{GeneratedProblem}
+    problems, grammar = problem_grammar_pairs
+    return generate_data([ProblemGrammarPair(p, grammar) for p in problems], args...; kwargs...)
+end
+ 

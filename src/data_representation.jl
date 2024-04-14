@@ -50,9 +50,10 @@ mutable struct StarEnCoderIOEncoder <: AbstractStarCoderIOEncoder
             encoder.resize_token_embeddings(length(tokenizer))
         end
 
+
         embed_dim = encoder.config.hidden_size * 2
 
-        # encoder = torch.nn.DataParallel(encoder).to(device)
+        encoder = torch.nn.DataParallel(encoder).to(device)
 
         new(tokenizer, encoder, embed_dim, batch_size, max_sequence_length)
     end
@@ -70,13 +71,13 @@ mutable struct StarCoderIOEncoder <: AbstractStarCoderIOEncoder
     batch_size::Int
     max_sequence_length::Int
 
-    function StarCoderIOEncoder(batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1, model_path::AbstractString=nothing)
+    function StarCoderIOEncoder(batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1, model_path::AbstractString="")
         transformers = pyimport("transformers")
 
         checkpoint = "bigcode/starcoder"
         tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
 
-        if isnothing(model_path)
+        if isempty(model_path)
             encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto", load_in_8bit=true)  # load to GPUs
         elseif endswith(model_path, '/') && !isdir(model_path)
             # Load model if not existent
@@ -96,7 +97,63 @@ mutable struct StarCoderIOEncoder <: AbstractStarCoderIOEncoder
             param.requires_grad = false
         end
 
-        if !isnothing(model_path) && !isdir(model_path) 
+        if !isempty(model_path) && !isdir(model_path) 
+            # Save model to disk
+            encoder.save_pretrained(model_path)
+        end
+
+        # >>> output_2["last_hidden_state"].size()
+        # torch.Size([1, 15, 6144])
+
+        if isnothing(tokenizer.pad_token)
+            tokenizer.add_special_tokens(Dict("pad_token" => "[PAD]"))
+            encoder.resize_token_embeddings(length(tokenizer))
+        end
+
+        embed_dim = encoder.config.hidden_size * 2
+        new(tokenizer, encoder, embed_dim, batch_size, max_sequence_length)
+    end
+end
+
+"""
+
+Make sure that `model_path` ends with a '/'. 
+"""
+mutable struct StarCoder2IOEncoder <: AbstractStarCoderIOEncoder
+    tokenizer
+    encoder
+    EMBED_DIM::Int
+    batch_size::Int
+    max_sequence_length::Int
+
+    function StarCoder2IOEncoder(batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1, model_path::AbstractString="")
+        transformers = pyimport("transformers")
+
+        checkpoint = "bigcode/starcoder2-15b"
+        quantization_config = transformers.BitsAndBytesConfig(load_in_8bit=True)
+        tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
+
+        if isempty(model_path)
+            encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto", quantization_config=quantization_config)  # load to GPUs
+        elseif endswith(model_path, '/') && !isdir(model_path)
+            # Load model if not existent
+            encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto", quantization_config=quantization_config) 
+            # Prune model to hidden state
+            encoder.h = torch.nn.ModuleList([layer for (i, layer) in enumerate(encoder.h) if i<hidden_state]) # in range 1 to 40
+            encoder.config.n_layer = hidden_state
+
+        elseif isdir(model_path)
+            # Load encoder from disk
+            encoder = transformers.AutoModel.from_pretrained(model_path, device_map = "auto", quantization_config=quantization_config)  # load to gpu from disk
+        else
+            throw(ArgumentError("Invalid model path selected. Make sure to select a directory."))
+        end
+
+        for param in encoder.parameters() 
+            param.requires_grad = false
+        end
+
+        if !isempty(model_path) && !isdir(model_path) 
             # Save model to disk
             encoder.save_pretrained(model_path)
         end
@@ -207,7 +264,7 @@ Encode input/output examples using the provided AbstractStarCoderIOEncoder.
 
 # Examples
 ```julia
-io_examples = [HerbData.IOExample(input1, output1), HerbData.IOExample(input2, output2)]
+io_examples = [HerbSpecification.IOExample(input1, output1), HerbSpecification.IOExample(input2, output2)]
 encoder = StarEnCoderIOEncoder()
 encoded_examples = encode_IO_examples(io_examples, encoder)
 ```
