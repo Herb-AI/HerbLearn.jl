@@ -68,7 +68,7 @@ function pretrain_heuristic(
         gen_problems = open(deserialize, generated_problems_path)
 
         #assert to check whether parts per program matches with loaded data size
-        @assert length(gen_problems) / num_problems == num_partial_programs
+        @assert length(gen_problems) / num_problems == num_programs 
     end
     println("Number of generated IOP problems: ", length(gen_problems))
 
@@ -147,8 +147,8 @@ function train!(model, train_dataloader::DataLoader, valid_dataloader::DataLoade
             train_preds, train_labels = eval(model, train_dataloader, device)
             valid_preds, valid_labels = eval(model, valid_dataloader, device)
 
-            train_score = metrics.accuracy_score(train_preds.flatten()>0.5, train_labels.flatten())
-            valid_score = metrics.accuracy_score(valid_preds.flatten()>0.5, valid_labels.flatten())
+            train_score = metrics.accuracy_score(train_labels.flatten(), train_preds.flatten()>0.5)
+            valid_score = metrics.accuracy_score(valid_labels.flatten(), valid_preds.flatten()>0.5)
             println("Accuracy train/test:\t", train_score, "\t", valid_score)
         end
 

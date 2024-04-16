@@ -10,6 +10,10 @@ mutable struct ProblemGrammarPair
     grammar::AbstractGrammar
 end
 
+contains_node(rn::RuleNode, ind::Int) = rn.ind == ind || any(contains_node(c, ind) for c ∈ rn.children)
+contains_node(hole::Hole, ind::Int) = false
+
+input_rules(grammar::AbstractGrammar) = findall(rule -> occursin("_arg_", string(rule)), grammar.rules)
 
 """
 This function 1. takes a vector of problems from the Benchmark directory, 2. samples programs from the grammar, 3. applies the generated programs on the inputs and 4. returns I/O samples + the program leading from input to output. This will generate `length(problem.spec) × num_samples` data points minus the number of samples+programs that failed on execution.+
@@ -40,9 +44,15 @@ function generate_data(
         i = 1
         while i <= num_samples
             h = rand(RuleNode, grammar, start, max_depth)
+            # check whether hypothesis rulenode has minimum depth
             if !isnothing(min_depth) && depth(h) < min_depth
                 continue
             end
+            # check whether `_arg_X` are present at least once
+            if !all(contains_node(h, ind) for ind in input_rules(grammar))
+                continue
+            end
+
             expr = rulenode2expr(h, grammar)
 
             try
@@ -62,7 +72,6 @@ function generate_data(
 
                     io_example = IOExample(example.in, output)
                     push!(io_examples, io_example)
-                    # push!(gen_IO_data, (io_example, h, partial_program, correct_derivation))
                 end
 
                 gen_problem = GeneratedProblem(io_examples, h, get_partial_programs([h], grammar, parts_per_program), grammar)

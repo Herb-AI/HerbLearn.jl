@@ -219,6 +219,11 @@ end
 """
 function encode_grammar(generated_problems::Vector{GeneratedProblem}, encoder::AbstractProgramEncoder)
     return_vec = []
+    if all(p.grammar == generated_problems[1].grammar for p in generated_problems) 
+        println("Bumm")
+        vec = encode_grammar(generated_problems[1].grammar, encoder)
+        return [vec for _ in 1:length(generated_problems)]
+    end
 
     for gen_problem in ProgressBar(generated_problems)
         push!(return_vec, encode_grammar(gen_problem.grammar, encoder))
