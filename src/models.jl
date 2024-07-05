@@ -124,23 +124,22 @@ end
 
 """
 @pydef mutable struct DerivationPredNet <: torch.nn.Module
-    function __init__(self, num_IO_features::Int, num_prog_features::Int, num_derivations::Int, hidden_layer_sizes::Vector{Int}=[])
+    function __init__(self, num_IO_features::Int,  num_derivations::Int, hidden_layer_sizes::Vector{Int}=[])
         pybuiltin(:super)(DerivationPredNet, self).__init__()
-        println("num_IO_features: $num_IO_features\nnum_prog_features: $num_prog_features\nnum_derivations: $num_derivations")
+        println("num_IO_features: $num_IO_features\nnum_derivations: $num_derivations")
 
         self.num_IO_features = num_IO_features
-        self.num_prog_features = num_prog_features
         self.num_derivations = num_derivations
 
-        self.sizes = [[num_IO_features + num_prog_features]; hidden_layer_sizes; num_derivations]
+        self.sizes = [[num_IO_features]; hidden_layer_sizes; num_derivations]
         self.MLP = MLP(self.sizes)
     end
 
-    function forward(self, io_x, prog_x)
+    function forward(self, io_x)
         batch_size = io_x.shape[1]
-        x = torch.cat([io_x, prog_x], dim=1)
+        # x = torch.cat([io_x, prog_x], dim=1)
 
-        x = self.MLP(x)
+        x = self.MLP(io_x)
 
         return x.sigmoid()
    end
@@ -151,28 +150,26 @@ end
 
 """
 @pydef mutable struct SemanticDerivationPredNet <: torch.nn.Module
-    function __init__(self, num_IO_features::Int, num_prog_features::Int, grammar_dim, hidden_layer_sizes::Vector{Int}=[])
+    function __init__(self, num_IO_features::Int, grammar_dim, hidden_layer_sizes::Vector{Int}=[])
         pybuiltin(:super)(SemanticDerivationPredNet, self).__init__()
 
-        println("num_IO_features: $num_IO_features\nnum_prog_features: $num_prog_features\ngrammar_features: $grammar_dim")
+        println("num_IO_features: $num_IO_features\n \ngrammar_features: $grammar_dim")
 
         self.num_IO_features = num_IO_features
-        self.num_prog_features = num_prog_features
         self.grammar_dim = grammar_dim
 
-        self.sizes = [[num_IO_features + num_prog_features]; hidden_layer_sizes; grammar_dim]
+        self.sizes = [[num_IO_features]; hidden_layer_sizes; grammar_dim]
         self.MLP = MLP(self.sizes)
     end
 
-    function forward(self, io_x, prog_x, grammar_embeddings)
+    function forward(self, io_x, grammar_embeddings)
         batch_size = io_x.shape[1]
-        x = torch.cat([io_x.view(batch_size, -1), prog_x], dim=1)
 
-        x = self.MLP(x)
+        x = self.MLP(io_x)
 
         # calculate cosine similarity
         x = torch.nn.functional.normalize(x, p=2, dim=1)
-        grammar_embeddings = torch.nn.functional.normalize(grammar_embeddings, p=2, dim=2)
+        grammar_embeddings = torch.nn.functional.normalize(grammar_embeddings, p=2, dim=1)
 
         x = torch.matmul(grammar_embeddings, x.unsqueeze(dim=2)).squeeze()
         

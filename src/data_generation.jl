@@ -1,12 +1,7 @@
 mutable struct GeneratedProblem
     io_examples::Vector{IOExample}
     program::AbstractRuleNode
-    partial_programs::Vector{Tuple{AbstractRuleNode, Int}}
-    grammar::AbstractGrammar
-end
-
-mutable struct ProblemGrammarPair
-    problem::Problem{Vector{IOExample}}
+    # partial_programs::Vector{Tuple{AbstractRuleNode, Int}}
     grammar::AbstractGrammar
 end
 
@@ -15,6 +10,7 @@ contains_node(hole::Hole, ind::Int) = false
 
 input_rules(grammar::AbstractGrammar) = findall(rule -> occursin("_arg_", string(rule)), grammar.rules)
 
+
 """
 This function 1. takes a vector of problems from the Benchmark directory, 2. samples programs from the grammar, 3. applies the generated programs on the inputs and 4. returns I/O samples + the program leading from input to output. This will generate `length(problem.spec) × num_samples` data points minus the number of samples+programs that failed on execution.+
 """
@@ -22,10 +18,9 @@ function generate_data(
         problem_grammar_pairs::Vector{ProblemGrammarPair},
         start::Symbol,
         num_samples::Int,
-        parts_per_program::Int,
         evaluator::Function=HerbInterpret.execute_on_input;
         min_depth::Union{Int, Nothing}=2,
-        max_depth::Union{Int, Nothing}=20, 
+        max_depth::Int=20, 
         max_time::Union{Int, Nothing}=nothing,
         max_enumerations::Union{Int, Nothing}=nothing,
     )::Vector{GeneratedProblem}
@@ -38,8 +33,12 @@ function generate_data(
     # Sample programs searching program space
     gen_IO_data = []
     for pair in ProgressBar(problem_grammar_pairs)
-        problem, grammar = pair.problem, pair.grammar
-        # generate symbol table from given grammar
+        problem, grammar = pair.problem, deepcopy(pair.grammar)
+
+        if length(problem.spec) > 50
+            continue
+        end
+
         symboltable::SymbolTable = SymbolTable(grammar)
         i = 1
         while i <= num_samples
@@ -59,22 +58,30 @@ function generate_data(
                 # This assumes that every generated program is executable on every single input
                 outputs = [output for output in [evaluator(
                     symboltable, expr, example.in) for example in problem.spec]]
-
+                
                 io_examples = []
+
+                # Guard for BV manipulations discarding 0x000 and equivalents
+                if all(output == 0 || length(output)==0 for output in outputs)
+                    throw(BoundsError)
+                end
+
                 # Align inputs and generated outputs
                 for (example, output) in zip(problem.spec, outputs)
                     if length(string(output)) == 0 && typeof(output) == String
                         output = "()"
                     end
-                    if typeof(output) == String && typeof(example.in) == String && length(output) > 2*length(example.in)
+
+                    # Guard for too long string transformations
+                    if all(length(string(output)) > 2*length(string(value)) for value in values(example.in))
                         throw(BoundsError)
                     end
 
                     io_example = IOExample(example.in, output)
                     push!(io_examples, io_example)
                 end
-
-                gen_problem = GeneratedProblem(io_examples, h, get_partial_programs([h], grammar, parts_per_program), grammar)
+                # gen_problem = GeneratedProblem(io_examples, h, get_partial_programs([h], grammar, parts_per_program), grammar)
+                gen_problem = GeneratedProblem(io_examples, h, grammar)
                 
                 push!(gen_IO_data, gen_problem)
             catch ex
@@ -92,11 +99,3 @@ function generate_data(
 
     return gen_IO_data
 end
-
-function generate_data(
-    problem_grammar_pairs::Tuple{Vector{Problem{Vector{IOExample}}}, <:AbstractGrammar},
-    args...; kwargs...)::Vector{GeneratedProblem}
-    problems, grammar = problem_grammar_pairs
-    return generate_data([ProblemGrammarPair(p, grammar) for p in problems], args...; kwargs...)
-end
- 

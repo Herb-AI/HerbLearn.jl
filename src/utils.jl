@@ -25,3 +25,13 @@ function top_k_ranking(vec, k=3)
     topk_tensor[indices] = vec[indices]
     return topk_tensor
 end
+
+function merge_grammars_function_save!(merge_to::AbstractGrammar, merge_from::AbstractGrammar)
+    merge_to_rules = [string(rule) for rule in merge_to.rules]   
+	for i in eachindex(merge_from.rules)
+		expression = :($(merge_from.types[i]) = $(merge_from.rules[i]))
+        if string(merge_from.rules[i]) ∉ merge_to_rules
+            add_rule!(merge_to, expression)
+        end
+	end
+end

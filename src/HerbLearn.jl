@@ -24,10 +24,12 @@ function __init__()
 end
 
 using HerbCore
+using HerbConstraints
 using HerbGrammar
 using HerbInterpret
 using HerbSearch
 using HerbSpecification
+using HerbBenchmarks: ProblemGrammarPair
 
 include("data_generation.jl")
 include("data_representation.jl")
@@ -54,7 +56,7 @@ export
   StarEnCoderIOEncoder,
   StarCoderIOEncoder, 
   StarCoder2IOEncoder,
-
+  ProblemSignatureIOEncoder,
   encode_IO_examples,
 
   AbstractProgramEncoder,
@@ -73,5 +75,7 @@ export
 
   DerivationPredNet,
   SemanticDerivationPredNet,
-  MLP
+  MLP,
+
+  input_rules
 end #module HerbLearn

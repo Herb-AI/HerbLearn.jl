@@ -89,7 +89,7 @@ mutable struct StarCoderProgramEncoder <: AbstractStarCoderProgramEncoder
         checkpoint = "bigcode/starcoder"
         tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
 
-        if isemtpy(model_path)
+        if isempty(model_path)
             encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto")  # load to GPUs
         elseif endswith(model_path, '/') && !isdir(model_path)
             # Load model if not existent
@@ -200,6 +200,7 @@ mutable struct StarCoder2ProgramEncoder <: AbstractStarCoderProgramEncoder
 end
 
 
+HerbCore.get_rule(hole::Hole) = findfirst(hole.domain)
 
 """
 
@@ -208,7 +209,8 @@ function encode_programs(generated_problems::Vector{GeneratedProblem}, encoder::
     return_vec = []
     for gen_problem in ProgressBar(generated_problems)
         partial_programs = [tup[1] for tup in gen_problem.partial_programs]
-        input_expr = [string(rulenode2expr(rulenode, gen_problem.grammar)) for rulenode ∈ partial_programs]
+        # input_expr = [string(rulenode2expr(rulenode, gen_problem.grammar)) for rulenode ∈ partial_programs]
+        input_expr = ["" for rulenode ∈ partial_programs] # @TODO fix rulenode2expr
         push!(return_vec, encode_programs(input_expr, encoder))
     end
     return return_vec
@@ -219,21 +221,26 @@ end
 """
 function encode_grammar(generated_problems::Vector{GeneratedProblem}, encoder::AbstractProgramEncoder)
     return_vec = []
-    if all(p.grammar == generated_problems[1].grammar for p in generated_problems) 
-        println("Bumm")
-        vec = encode_grammar(generated_problems[1].grammar, encoder)
-        return [vec for _ in 1:length(generated_problems)]
-    end
-
     for gen_problem in ProgressBar(generated_problems)
         push!(return_vec, encode_grammar(gen_problem.grammar, encoder))
     end
     return return_vec
 end
 
+
 function encode_grammar(grammar::AbstractGrammar, encoder::AbstractProgramEncoder)
     rules = [string(rule) for rule in grammar.rules]
     return encode_programs(rules, encoder)
+end
+
+function get_rule_indices(generated_problems::Vector{GeneratedProblem}, all_rule_grammar::AbstractGrammar)
+    return [torch.tensor(get_rule_indices(gp.grammar, all_rule_grammar), dtype=torch.int)-1 for gp in generated_problems]
+end
+
+function get_rule_indices(grammar::AbstractGrammar, all_rule_grammar::AbstractGrammar)
+    all_rule_strings = [string(rule) for rule in all_rule_grammar.rules]
+    grammar_rule_strings = [string(rule) for rule in grammar.rules]
+    return [findfirst(isequal(x), all_rule_strings) for x in grammar_rule_strings]
 end
 
 """
@@ -246,6 +253,8 @@ end
 function encode_programs(programs::Vector{<:AbstractString}, encoder::ZeroProgramEncoder)
     return torch.zeros(length(programs), encoder.EMBED_DIM)
 end
+
+encode_grammar(::Any, encoder::ZeroProgramEncoder) = error("ZeroProgramEncoder should not be used to encode grammars!")
 
 """
 
@@ -335,7 +344,6 @@ Function to generate labels in a DeepCoder fashion, i.e. mapping each program to
 function deepcoder_labels(gen_problems::Vector{GeneratedProblem})
     return_vec = []
     for gen_problem in gen_problems
-        @assert length(gen_problem.partial_programs) == 1
         push!(return_vec, torch.unsqueeze(deepcoder_labels_for_node(gen_problem.program, gen_problem.grammar), dim=0))
     end
     return return_vec
@@ -347,7 +355,7 @@ Recursively computes DeepCoder encoding for a program given the root (Abstract)R
 function deepcoder_labels_for_node(node::AbstractRuleNode, grammar::AbstractGrammar)
     retval = torch.zeros(length(grammar.rules))
 
-    retval[node.ind-1] = 1
+    retval[node.ind] = 1
 
     if isempty(node.children)
         return retval
