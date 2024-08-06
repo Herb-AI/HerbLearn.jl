@@ -176,3 +176,35 @@ end
         return x.sigmoid()
    end
 end
+
+"""
+
+"""
+@pydef mutable struct NonNNSemanticDerivationPredNet <: torch.nn.Module
+    function __init__(self, num_IO_features::Int, grammar_dim)
+        pybuiltin(:super)(NonNNSemanticDerivationPredNet, self).__init__()
+
+        println("num_IO_features: $num_IO_features\n \ngrammar_features: $grammar_dim")
+
+        self.num_IO_features = num_IO_features
+        self.grammar_dim = grammar_dim
+
+    end
+
+    function forward(self, io_x, grammar_embeddings)
+        batch_size, lat_dim = io_x.shape
+
+        first_half, second_half = torch.split(io_x, lat_dim ÷ 2, dim=1)
+
+        x = (first_half + second_half) / 2
+
+        # calculate cosine similarity
+        x = torch.nn.functional.normalize(x, p=2, dim=1)
+        grammar_embeddings = torch.nn.functional.normalize(grammar_embeddings, p=2, dim=1)
+
+        x = torch.matmul(grammar_embeddings, x.unsqueeze(dim=2)).squeeze()
+        
+        return x.sigmoid()
+   end
+end
+

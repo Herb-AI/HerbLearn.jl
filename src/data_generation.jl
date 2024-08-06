@@ -10,6 +10,35 @@ contains_node(hole::Hole, ind::Int) = false
 
 input_rules(grammar::AbstractGrammar) = findall(rule -> occursin("_arg_", string(rule)), grammar.rules)
 
+@programiterator RandomSampler(min_depth::Union{Nothing, Int}=nothing) 
+
+function Base.iterate(iter::RandomSampler, state=nothing)
+    grammar = HerbConstraints.get_grammar(iter.solver)
+    start = get_starting_symbol(iter.solver)
+    max_depth = get_max_depth(iter.solver)
+    for i in 1:1000000
+        h = rand(RuleNode, grammar, start, max_depth)
+        # check whether hypothesis rulenode has minimum depth
+        if !isnothing(iter.min_depth) && depth(h) < iter.min_depth
+            continue
+        end
+        # check whether `_arg_X` are present at least once
+
+        if length(grammar.rules) > 50
+            if !any(contains_node(h, ind) for ind in input_rules(grammar))
+                continue
+            end
+        else
+            if !all(contains_node(h, ind) for ind in input_rules(grammar))
+                continue
+            end
+        end
+
+        return h, nothing
+    end
+    error("Too many samples had to be drawn. Maybe try another iterator instead.")
+end
+
 
 """
 This function 1. takes a vector of problems from the Benchmark directory, 2. samples programs from the grammar, 3. applies the generated programs on the inputs and 4. returns I/O samples + the program leading from input to output. This will generate `length(problem.spec) × num_samples` data points minus the number of samples+programs that failed on execution.+
@@ -17,8 +46,8 @@ This function 1. takes a vector of problems from the Benchmark directory, 2. sam
 function generate_data(
         problem_grammar_pairs::Vector{ProblemGrammarPair},
         start::Symbol,
-        num_samples::Int,
-        evaluator::Function=HerbInterpret.execute_on_input;
+        num_samples::Int;
+        ben_module::Module=Main,
         min_depth::Union{Int, Nothing}=2,
         max_depth::Int=20, 
         max_time::Union{Int, Nothing}=nothing,
@@ -35,30 +64,44 @@ function generate_data(
     for pair in ProgressBar(problem_grammar_pairs)
         problem, grammar = pair.problem, deepcopy(pair.grammar)
 
+        # discard longer examples
         if length(problem.spec) > 50
             continue
         end
 
-        symboltable::SymbolTable = SymbolTable(grammar)
-        i = 1
-        while i <= num_samples
-            h = rand(RuleNode, grammar, start, max_depth)
-            # check whether hypothesis rulenode has minimum depth
+        iter = nothing
+        if length(grammar.rules) < 100
+            iter = RandomSampler(grammar, start, min_depth=min_depth, max_depth=max_depth)
+        else 
+            iter = HerbSearch.RandomSearchIterator(grammar, start, max_depth=max_depth)
+            # check whether `_arg_X` are present at least once
+            for i in 1:min(length(problem.spec[1].in),2)
+                addconstraint!(grammar, Contains(findfirst(rule -> occursin("_arg_$i", string(rule)), grammar.rules)))
+            end
+        end
+
+        st = nothing
+        if string(ben_module) != "HerbBenchmarks.String_transformations_2020"
+            st = SymbolTable(grammar)
+        end
+
+        i = 0
+        for h in iter
             if !isnothing(min_depth) && depth(h) < min_depth
                 continue
             end
-            # check whether `_arg_X` are present at least once
-            if !all(contains_node(h, ind) for ind in input_rules(grammar))
-                continue
-            end
-
             expr = rulenode2expr(h, grammar)
 
             try
-                # This assumes that every generated program is executable on every single input
-                outputs = [output for output in [evaluator(
-                    symboltable, expr, example.in) for example in problem.spec]]
-                
+                # Check that every generated program is executable on every single input
+                output = nothing
+                if string(ben_module) == "HerbBenchmarks.String_transformations_2020"
+                    outputs = [ben_module.interpret(h, grammar, ex) for ex in problem.spec]
+                else
+                    expr = rulenode2expr(h, grammar)
+                    outputs = [execute_on_input(st, expr, ex.in) for ex in problem.spec]
+                end
+
                 io_examples = []
 
                 # Guard for BV manipulations discarding 0x000 and equivalents
@@ -89,6 +132,9 @@ function generate_data(
             end
 
             i += 1
+            if i == num_samples
+                break
+            end
 
             # Check stopping conditions
             if check_enumerations && i > max_enumerations || check_time && time() - start_time > max_time

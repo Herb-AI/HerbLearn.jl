@@ -9,7 +9,6 @@ struct DataLoader <: AbstractDataLoader
             i = i.item() + 1 # PyTorch tensor to Julia index
             range = collect((i-1) * num_programs+1:(i) * num_programs)
             for k in range
-                println(label_data[k])
                 push!(dataset, (io_encodings[k], torch.unsqueeze(label_data[k],0)))
             end
         end

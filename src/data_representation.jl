@@ -250,7 +250,7 @@ function encode_IO_examples(gen_problems::Vector{GeneratedProblem}, encoder::Abs
         push!(num_examples, length(gen_problem.io_examples))
     end
 
-    embed_matrix = encode_IO_examples(all_examples, encoder, false)
+    embed_matrix = encode_IO_examples(all_examples, encoder, false, true)
 
     return_features = []
     start_index = 1
@@ -322,7 +322,7 @@ function encode_IO_examples(io_examples::Vector{HerbSpecification.IOExample}, en
             embeddings = torch.cat([encoded_inputs, encoded_outputs], dim=1)
 
             push!(problem_io_encodings, embeddings.cpu())
-            GC.gc()
+            GC.gc(false)
         end
 
         problem_io_encodings = torch.cat(problem_io_encodings, dim=0)
@@ -333,15 +333,15 @@ function encode_IO_examples(io_examples::Vector{HerbSpecification.IOExample}, en
     end
 end
 
-mutable struct ProblemSignatureIOEncoder <: AbstractIOEncoder
+mutable struct PropertySignatureIOEncoder <: AbstractIOEncoder
     EMBED_DIM::Int  # default for String typed and related inputs/outputs
 
-    function ProblemSignatureIOEncoder()
+    function PropertySignatureIOEncoder()
         new(17)
     end
 end
 
-function encode_IO_examples(io_examples::Vector{HerbSpecification.IOExample}, encoder::ProblemSignatureIOEncoder)
+function encode_IO_examples(io_examples::Vector{HerbSpecification.IOExample}, encoder::PropertySignatureIOEncoder)
     # Generate a matrix where each row corresponds to properties from one pair
     properties_matrix = torch.vstack([encode_string_relationships(ex) for ex in io_examples])
 

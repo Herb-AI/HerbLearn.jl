@@ -56,7 +56,7 @@ export
   StarEnCoderIOEncoder,
   StarCoderIOEncoder, 
   StarCoder2IOEncoder,
-  ProblemSignatureIOEncoder,
+  PropertySignatureIOEncoder,
   encode_IO_examples,
 
   AbstractProgramEncoder,
@@ -75,6 +75,7 @@ export
 
   DerivationPredNet,
   SemanticDerivationPredNet,
+  NonNNSemanticDerivationPredNet,
   MLP,
 
   input_rules

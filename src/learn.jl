@@ -11,6 +11,7 @@ function pretrain_heuristic(
     grammar_encoder::AbstractProgramEncoder,
     start::Symbol=:Start,
     num_programs::Int=100,
+    ben_module::Module=Main,
     # num_partial_programs::Int=5,
     n_epochs::Int=100,
     batch_size::Int=20,
@@ -32,7 +33,7 @@ function pretrain_heuristic(
     generated_problems_path = joinpath(data_dir, "generated_$(semantic ? "sem" : "nonsem")_problems.jls")
     if !isfile(generated_problems_path)
         println("Generating data...")
-        gen_problems = generate_data(problem_grammar_pairs, start, num_programs; min_depth=2, max_depth=6)
+        gen_problems = generate_data(problem_grammar_pairs, start, num_programs; ben_module=ben_module, min_depth=2, max_depth=6)
 
         open(generated_problems_path, "w") do file
             serialize(file, gen_problems)
@@ -40,7 +41,6 @@ function pretrain_heuristic(
     else
         println("Loading data...")
         gen_problems = open(deserialize, generated_problems_path)
-        #assert to check whether parts per program matches with loaded data size
     end
 
     println("Number of generated IOP problems: ", length(gen_problems))
@@ -71,7 +71,6 @@ function pretrain_heuristic(
         label_data = loaded_data["label_data"]
         grammar_indices = loaded_data["grammar_indices"]
         all_rule_grammar_encoding = semantic ? loaded_data["all_rule_grammar_encoding"] : nothing
-
     end
 
     label_size = sum([reduce(*, vec.size()) for vec in label_data])
@@ -97,16 +96,13 @@ function pretrain_heuristic(
 
         model = DerivationPredNet(data_encoder.EMBED_DIM, reference_length, [64, 64])
     else 
-        train_dataloader = nothing
-        test_dataloader = nothing
-        
         train_dataloader = PrototypeDataLoader(train_indices, io_encodings, grammar_indices, all_rule_grammar_encoding, label_data, batch_size, true, num_programs)
         test_dataloader = PrototypeDataLoader(test_indices, io_encodings, grammar_indices, all_rule_grammar_encoding, label_data, batch_size, false, num_programs)
 
         model = SemanticDerivationPredNet(data_encoder.EMBED_DIM, grammar_encoder.EMBED_DIM, [64, 64])
     end
    
-    model = torch.nn.DataParallel(model).to(device)
+    model = model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
@@ -123,19 +119,23 @@ end
 
 
 function train!(model, train_dataloader::DataLoader, valid_dataloader::DataLoader, n_epochs, optimizer, device, loss_func)
-    for epoch in 1:n_epochs
+    for epoch in ProgressBar(1:n_epochs)
         accu_loss = 0
+        num_samples = 0
         for (i, (io_emb, y)) in enumerate(train_dataloader)
             batch_size = io_emb.size(0)
             (io_emb, y) = io_emb.to(device), y.to(device)
             output = model(io_emb)
             loss = loss_func(output, y)/length(train_dataloader)
             accu_loss += loss.item()
+            num_samples += batch_size
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            GC.gc(false)
         end
+        accu_loss /= num_samples
         epoch % 100 == 0 && println("Epoch: $epoch\tLoss: $(accu_loss)")  # Probe performance
 
         if epoch % 500 == 0 
@@ -144,7 +144,9 @@ function train!(model, train_dataloader::DataLoader, valid_dataloader::DataLoade
 
             train_score = metrics.accuracy_score(train_labels.flatten(), train_preds.flatten()>0.5)
             valid_score = metrics.accuracy_score(valid_labels.flatten(), valid_preds.flatten()>0.5)
-            println("Accuracy train/test:\t", train_score, "\t", valid_score)
+            println("\nAccuracy train/test:\t", train_score, "\t", valid_score)
+            println("Train sanity check: ", train_preds.max(), train_preds.mean())
+            println("Validation sanity check: ", valid_preds.max(), valid_preds.mean())
         end
 
         flush(stdout)
@@ -156,6 +158,8 @@ function train!(model, train_dataloader::PrototypeDataLoader, valid_dataloader::
     all_rules_grammar_emb = train_dataloader.all_rules_grammar_emb.to(device)
     for epoch in ProgressBar(1:n_epochs)
         accu_loss = 0
+        num_samples = 0
+
         for (i, (io_emb, grammar_indices, y)) in enumerate(train_dataloader)
             batch_size = io_emb.size(0)
             (io_emb, grammar_indices, y) = io_emb.to(device), grammar_indices.to(device)[1], y.to(device)
@@ -165,11 +169,16 @@ function train!(model, train_dataloader::PrototypeDataLoader, valid_dataloader::
             loss = loss_func(output, y)/length(train_dataloader)
             accu_loss += loss.item()
 
+            num_samples += batch_size
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            GC.gc(false)
         end
-        epoch % 100 == 0 && println("Epoch: $epoch\tLoss: $(accu_loss)")  # Probe performance
+        accu_loss /= num_samples
+        epoch % 100 == 0 && println("\nEpoch: $epoch\tLoss: $(accu_loss)")  # Probe performance
 
         if epoch % 500 == 0 
             train_preds, train_labels = eval(model, train_dataloader, device)
@@ -177,7 +186,7 @@ function train!(model, train_dataloader::PrototypeDataLoader, valid_dataloader::
 
             train_score = metrics.accuracy_score(train_labels.flatten(), train_preds.flatten()>0.5)
             valid_score = metrics.accuracy_score(valid_labels.flatten(),valid_preds.flatten()>0.5)
-            println("Accuracy train/test:\t", train_score, "\t", valid_score)
+            println("\nAccuracy train/test:\t", train_score, "\t", valid_score)
             println("Train sanity check: ", train_preds.max(), train_preds.mean())
             println("Validation sanity check: ", valid_preds.max(), valid_preds.mean())
         end
@@ -217,8 +226,8 @@ function eval(model, test_dataloader::PrototypeDataLoader, device)
 
             output = model(io_emb, grammar_emb)
 
-            preds = torch.cat([preds, output.to("cpu")], dim=0)
-            labels = torch.cat([labels, y.to("cpu")], dim=0)
+            preds = torch.cat([preds, output.view(-1).to("cpu")], dim=0)
+            labels = torch.cat([labels, y.view(-1).to("cpu")], dim=0)
 
             GC.gc(false)
         end
