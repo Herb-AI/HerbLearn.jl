@@ -2,11 +2,14 @@ module HerbLearn
 
 using PyCall
 using Random
+Random.seed!(42);
 
 using Serialization
 
 using JLD
 using ProgressBars
+using CSV
+using DataFrames
 
 const global torch = pyimport("torch")
 const global np = pyimport("numpy")

@@ -30,7 +30,7 @@ end
 """
 Given a set of I/O examples, this returns an encoding of that. If it is also given a (partial) dictionary, then examples are represented with respect to that dict and the function returns the updated dict.
 """
-function encode_IO_examples(io_examples::Vector{HerbSpecification.IOExample}, encoder::DeepCoderIOEncoder)
+function encode_IO_examples(io_examples::Vector{<:HerbSpecification.IOExample}, encoder::DeepCoderIOEncoder)
     # Initialize variables
     VECTOR_DIM = encoder.VECTOR_DIM
     EMB_NULL = encoder.EMB_NULL
@@ -93,15 +93,15 @@ mutable struct StarEnCoderIOEncoder <: AbstractStarCoderIOEncoder
     encoder
     EMBED_DIM::Int
     batch_size::Int
-    max_sequence_length::Int
 
-    function StarEnCoderIOEncoder(batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1)
+    function StarEnCoderIOEncoder(batch_size::Int=128, hidden_state::Int=13)
         transformers = pyimport("transformers")
         device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
 
         checkpoint = "bigcode/starencoder"
         tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
         encoder = transformers.AutoModelForPreTraining.from_pretrained(checkpoint)
+        encoder.eval()
 
         # Prune the model
         if hasproperty(encoder, :bert) && hasproperty(encoder.bert, :encoder) && hasproperty(encoder.bert.encoder, :layer)
@@ -120,12 +120,11 @@ mutable struct StarEnCoderIOEncoder <: AbstractStarCoderIOEncoder
             encoder.resize_token_embeddings(length(tokenizer), 8)
         end
 
-
-        embed_dim = encoder.config.hidden_size * 2
+        embed_dim = encoder.config.hidden_size# * 2
 
         encoder = torch.nn.DataParallel(encoder).to(device)
 
-        new(tokenizer, encoder, embed_dim, batch_size, max_sequence_length)
+        new(tokenizer, encoder, embed_dim, batch_size)
     end
 end
 
@@ -244,13 +243,13 @@ end
 
 function encode_IO_examples(gen_problems::Vector{GeneratedProblem}, encoder::AbstractStarCoderIOEncoder)
     num_examples = []
-    all_examples::Vector{HerbSpecification.IOExample} = []
+    all_examples = Vector{HerbSpecification.IOExample}()
     for gen_problem in gen_problems 
         append!(all_examples, gen_problem.io_examples)
         push!(num_examples, length(gen_problem.io_examples))
     end
 
-    embed_matrix = encode_IO_examples(all_examples, encoder, false, true)
+    embed_matrix = encode_IO_examples(all_examples, encoder; summarize=false, verbose=true)
 
     return_features = []
     start_index = 1
@@ -269,12 +268,12 @@ end
 
 
 """
-    encode_IO_examples(io_examples::Vector{HerbData.IOExample}, encoder::AbstractStarCoderIOEncoder)
+    encode_IO_examples(io_examples::Vector{<:HerbSpecification.IOExample}, encoder::AbstractStarCoderIOEncoder)
 
 Encode input/output examples using the provided AbstractStarCoderIOEncoder.
 
 # Arguments
-- `io_examples::Vector{HerbData.IOExample}`: A vector of input/output examples to be encoded.
+- `io_examples::Vector{<:HerbSpecification.IOExample}`: A vector of input/output examples to be encoded.
 - `encoder::AbstractStarCoderIOEncoder`: The encoder to be used for encoding the examples.
 
 # Returns
@@ -289,13 +288,16 @@ encoded_examples = encode_IO_examples(io_examples, encoder)
 
 The resulting embeddings will be stored and returned as `torch.cpu()`. 
 """
-function encode_IO_examples(io_examples::Vector{HerbSpecification.IOExample}, encoder::AbstractStarCoderIOEncoder, summarize::Bool=true, verbose=true)
+function encode_IO_examples(io_examples::Vector{<:HerbSpecification.IOExample}, encoder::AbstractStarCoderIOEncoder; summarize::Bool=true, verbose=true, separate_io=true)
     device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
     @pywith torch.no_grad() begin
         num_batches = ceil(Int, length(io_examples) / encoder.batch_size)
         data_batches = [io_examples[(i-1)*encoder.batch_size+1:min(i*encoder.batch_size, end)] for i in 1:num_batches]
 
         problem_io_encodings = []
+
+        BOS_TOKEN = encoder.tokenizer.special_tokens_map["bos_token"]
+        EOS_TOKEN = encoder.tokenizer.special_tokens_map["eos_token"]
 
         batch_iter = data_batches
         if verbose 
@@ -307,22 +309,29 @@ function encode_IO_examples(io_examples::Vector{HerbSpecification.IOExample}, en
             input_strings = [string(example.in)[findfirst(isequal('('), string(example.in))+1:end-1] for example in batch]
             output_strings = [string(example.out) for example in batch]
 
-            # tokenize string represenations
-            encoded_inputs = encoder.tokenizer(input_strings, padding="longest", return_tensors="pt", pad_to_multiple_of=8).to(device)
-            encoded_outputs = encoder.tokenizer(output_strings, padding="longest", return_tensors="pt", pad_to_multiple_of=8).to(device)
+            # Add special tokens
+            if separate_io
+                # Add special tokens to sentences; input and output are separated
+                io_strings = ["$BOS_TOKEN$input$EOS_TOKEN$output$EOS_TOKEN" for (input, output) in zip(input_strings, output_strings)]
+                
+                # println("encode_IO_examples.io_strings: $io_strings")
 
-            # encode examples using encoder model and take first hidden state of the transformer
-            encoded_inputs = encoder.encoder(input_ids=encoded_inputs["input_ids"], attention_mask=encoded_inputs["attention_mask"])["hidden_states"][end].detach()
-            encoded_outputs = encoder.encoder(input_ids=encoded_outputs["input_ids"], attention_mask=encoded_outputs["attention_mask"])["hidden_states"][end].detach()
+                # generate embedding
+                embeddings = _encode(io_strings,encoder)
+                push!(problem_io_encodings, embeddings.cpu())
+            else 
+                # Add special tokens to sentences
+                input_strings = ["$BOS_TOKEN$sentence$EOS_TOKEN" for sentence in input_strings]
+                output_strings = ["$BOS_TOKEN$sentence$EOS_TOKEN" for sentence in output_strings]
 
-            encoded_inputs = encoded_inputs.mean(dim=1)
-            encoded_outputs = encoded_outputs.mean(dim=1)
+                # embed string representations
+                encoded_inputs = _encode(input_strings, encoder)
+                encoded_outputs = _encode(output_strings, encoder)
 
-            # concatenate embeddings to final output matrix
-            embeddings = torch.cat([encoded_inputs, encoded_outputs], dim=1)
-
-            push!(problem_io_encodings, embeddings.cpu())
-            GC.gc(false)
+                # concatenate embeddings to final output matrix
+                embeddings = torch.cat([encoded_inputs, encoded_outputs], dim=1)
+                push!(problem_io_encodings, embeddings.cpu())
+            end
         end
 
         problem_io_encodings = torch.cat(problem_io_encodings, dim=0)
@@ -333,6 +342,83 @@ function encode_IO_examples(io_examples::Vector{HerbSpecification.IOExample}, en
     end
 end
 
+function encode_IO_examples2(gen_problems::Vector{GeneratedProblem}, encoder::AbstractStarCoderIOEncoder)
+    error()
+end
+
+function encode_IO_examples2(io_examples::Vector{<:HerbSpecification.IOExample}, encoder::AbstractStarCoderIOEncoder; verbose=true)
+    device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
+    @pywith torch.no_grad() begin
+
+
+
+        # Use string representation of Dict
+        input_strings = [string(example.in)[findfirst(isequal('('), string(example.in))+1:end-1] for example in batch]
+        output_strings = [string(example.out) for example in batch]
+
+        formatted_examples = CLS_TOKEN*join([input * " returns " * output], SEPARATOR_TOKEN) * SEPARATOR_TOKEN
+
+        println("input_strings: ", input_strings)
+        println("output_strings: ", output_strings)
+        println("formatted_examples: ", formatted_examples)
+
+        error()
+
+        # Add special tokens
+        if separate_io
+            # Add special tokens to sentences; input and output are separated
+            io_strings = ["$CLS_TOKEN$input$SEPARATOR_TOKEN$output$SEPARATOR_TOKEN" for (input, output) in zip(input_strings, output_strings)]
+
+            # generate embedding
+            embeddings = _encode(io_strings,encoder)
+            push!(problem_io_encodings, embeddings.cpu())
+        else 
+            # Add special tokens to sentences
+            input_strings = ["$CLS_TOKEN$sentence$SEPARATOR_TOKEN" for sentence in input_strings]
+            output_strings = ["$CLS_TOKEN$sentence$SEPARATOR_TOKEN" for sentence in output_strings]
+
+            # embed string representations
+            encoded_inputs = _encode(input_strings, encoder)
+            encoded_outputs = _encode(output_strings, encoder)
+
+            # concatenate embeddings to final output matrix
+            embeddings = torch.cat([encoded_inputs, encoded_outputs], dim=1)
+            push!(problem_io_encodings, embeddings.cpu())
+        end
+
+        return problem_io_encodings
+    end
+
+end
+
+function _encode(input_strings::Vector{<:AbstractString}, encoder::StarEnCoderIOEncoder) 
+    device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
+
+    encoded_inputs = encoder.tokenizer(input_strings, padding="longest", return_tensors="pt", pad_to_multiple_of=8).to(device) 
+
+    # println("_encode.encoded_inputs[input_ids]: $(encoded_inputs["input_ids"])")
+    # println("_encode.encoded_inputs[attention_mask]: $(encoded_inputs["attention_mask"])")
+
+    outputs = encoder.encoder(input_ids=encoded_inputs["input_ids"], attention_mask=encoded_inputs["attention_mask"])
+    embeddings = pool_and_normalize(outputs["hidden_states"][end], encoded_inputs["attention_mask"]).detach()
+
+    GC.gc(false)
+
+    return embeddings
+end
+
+function _encode(input_strings::Vector{<:AbstractString}, encoder::StarCoderIOEncoder) 
+    error("Rewrite this to use a proper embedding function.")
+    device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
+
+    encoded_inputs = encoder.tokenizer(input_strings, padding="longest", return_tensors="pt", pad_to_multiple_of=8).to(device) 
+
+    encoded_inputs = encoder.encoder(input_ids=encoded_inputs["input_ids"], attention_mask=encoded_inputs["attention_mask"])["last_hidden_state"].detach()
+    GC.gc(false)
+
+    return encoded_inputs
+end
+
 mutable struct PropertySignatureIOEncoder <: AbstractIOEncoder
     EMBED_DIM::Int  # default for String typed and related inputs/outputs
 
@@ -341,7 +427,7 @@ mutable struct PropertySignatureIOEncoder <: AbstractIOEncoder
     end
 end
 
-function encode_IO_examples(io_examples::Vector{HerbSpecification.IOExample}, encoder::PropertySignatureIOEncoder)
+function encode_IO_examples(io_examples::Vector{<:HerbSpecification.IOExample}, encoder::PropertySignatureIOEncoder)
     # Generate a matrix where each row corresponds to properties from one pair
     properties_matrix = torch.vstack([encode_string_relationships(ex) for ex in io_examples])
 
@@ -359,7 +445,7 @@ function encode_IO_examples(io_examples::Vector{HerbSpecification.IOExample}, en
     return signature.float()
 end
 
-function encode_string_relationships(example::HerbSpecification.IOExample)
+function encode_string_relationships(example::T) where T<:HerbSpecification.IOExample
     return_vec = torch.vstack([encode_string_relationships(string(val), string(example.out)) for val in values(example.in)])
     return return_vec.max(dim=0)[1]
 end

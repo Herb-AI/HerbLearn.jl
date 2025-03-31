@@ -1,6 +1,3 @@
-"""
-
-"""
 @pydef mutable struct Residual <: torch.nn.Module
     function __init__(self, fn)
         pybuiltin(:super)(Residual, self).__init__()
@@ -13,9 +10,6 @@
 end
 
 
-"""
-
-"""
 @pydef mutable struct MLPBlock <: torch.nn.Module
     function __init__(self, in_features, out_features, bias=true, layer_norm=true, dropout=0.3, activation=torch.nn.ReLU)
         pybuiltin(:super)(MLPBlock, self).__init__()
@@ -37,11 +31,8 @@ end
     end
 end
 
-"""
-
-"""
 @pydef mutable struct MLP <: torch.nn.Module
-    function __init__(self, sizes::Array{Int}, bias=true, layer_norm=true, dropout=0.1, activation=torch.nn.ReLU)
+    function __init__(self, sizes::Array{Int}; bias=true, layer_norm=true, dropout=0.1, activation=torch.nn.ReLU)
         pybuiltin(:super)(MLP, self).__init__()
 
         self.layers = torch.nn.ModuleList()  # Use ModuleList to hold submodules
@@ -120,9 +111,6 @@ A simple auto-encoder neural network model
     end
 end
 
-"""
-
-"""
 @pydef mutable struct DerivationPredNet <: torch.nn.Module
     function __init__(self, num_IO_features::Int,  num_derivations::Int, hidden_layer_sizes::Vector{Int}=[])
         pybuiltin(:super)(DerivationPredNet, self).__init__()
@@ -146,40 +134,45 @@ end
 end
 
 
-"""
-
-"""
 @pydef mutable struct SemanticDerivationPredNet <: torch.nn.Module
     function __init__(self, num_IO_features::Int, grammar_dim, hidden_layer_sizes::Vector{Int}=[])
         pybuiltin(:super)(SemanticDerivationPredNet, self).__init__()
+
+        # output_dim = 768
+        output_dim = 32 #one-hot in all_rule_grammar
 
         println("num_IO_features: $num_IO_features\n \ngrammar_features: $grammar_dim")
 
         self.num_IO_features = num_IO_features
         self.grammar_dim = grammar_dim
 
-        self.sizes = [[num_IO_features]; hidden_layer_sizes; grammar_dim]
-        self.MLP = MLP(self.sizes)
+        # self.sizes = [[num_IO_features]; hidden_layer_sizes; grammar_dim]
+        self.sizes = [[num_IO_features]; [256, 256, 256, 256]; output_dim]
+        self.MLP = MLP(self.sizes; bias=false, layer_norm=false, dropout=0.0)
+        self.grammar_MLP = MLP([grammar_dim, 256, 256, 256, output_dim]; bias=false, dropout=0.0)
     end
 
     function forward(self, io_x, grammar_embeddings)
         batch_size = io_x.shape[1]
 
-        x = self.MLP(io_x)
-
-        # calculate cosine similarity
-        x = torch.nn.functional.normalize(x, p=2, dim=1)
-        grammar_embeddings = torch.nn.functional.normalize(grammar_embeddings, p=2, dim=1)
-
-        x = torch.matmul(grammar_embeddings, x.unsqueeze(dim=2)).squeeze()
+        cos_gremb = cos_mat(io_x)
+        # println("1: sem_model.forward.cos_x.min/max/mean: $(cos_gremb.min())\t$(cos_gremb.max())\t$(cos_gremb.mean())")
         
-        return x.sigmoid()
+        x = self.MLP(io_x)
+        # grammar_embeddings = self.grammar_MLP(grammar_embeddings)
+
+        x = x.tanh()
+        # grammar_embeddings = grammar_embeddings.tanh()
+
+        cos_gremb = cos_mat(grammar_embeddings)
+        # println("2: sem_model.forward.cos_gremb.min/max/mean: $(cos_gremb.min())\t$(cos_gremb.max())\t$(cos_gremb.mean())")
+        cos_gremb = cos_mat(x)
+        println("3: sem_model.forward.cos_x.min/max/mean: $(cos_gremb.min())\t$(cos_gremb.max())\t$(cos_gremb.mean())")
+        
+        return (pairwise_cosine_sim(x, grammar_embeddings) + 1)/2
    end
 end
 
-"""
-
-"""
 @pydef mutable struct NonNNSemanticDerivationPredNet <: torch.nn.Module
     function __init__(self, num_IO_features::Int, grammar_dim)
         pybuiltin(:super)(NonNNSemanticDerivationPredNet, self).__init__()
@@ -204,7 +197,7 @@ end
 
         x = torch.matmul(grammar_embeddings, x.unsqueeze(dim=2)).squeeze()
         
-        return x.sigmoid()
+        return x
    end
 end
 

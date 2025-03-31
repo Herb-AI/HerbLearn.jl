@@ -1,3 +1,5 @@
+using Random 
+
 abstract type AbstractDataLoader end
 
 struct DataLoader <: AbstractDataLoader
@@ -23,6 +25,7 @@ struct DataLoader <: AbstractDataLoader
 end 
 
 Base.length(iter::DataLoader) = length(iter.loader)
+data_length(iter::DataLoader) = length(iter)
 
 function Base.iterate(dataloader::DataLoader, state=nothing)
     py_iter = pyimport("builtins").iter  # Import the Python iter function
@@ -48,6 +51,7 @@ end
 struct PrototypeDataLoader <: AbstractDataLoader
     problem_dataloaders::Vector{PyObject}
     all_rules_grammar_emb::PyObject
+    shuffle::Bool
 
     function PrototypeDataLoader(indices, io_encodings, grammar_indices, all_rules_grammar_encoding, label_data, batch_size::Int, shuffle::Bool, num_programs)
         problem_dataloaders = [] 
@@ -62,41 +66,61 @@ struct PrototypeDataLoader <: AbstractDataLoader
         end
 
         # Create DataLoader
-        new(problem_dataloaders, all_rules_grammar_encoding)
+        new(problem_dataloaders, all_rules_grammar_encoding, shuffle)
     end
 end
 
 Base.length(iter::PrototypeDataLoader) = sum([length(loader) for loader in iter.problem_dataloaders])
+data_length(iter::PrototypeDataLoader) = sum([length(loader.dataset) for loader in iter.problem_dataloaders])
 
 
 struct DataLoaderIteratorState
-    current_loader_index::Int
-    current_loader_state::Any
+    current_indices::Vector{Integer}
+    current_states::Vector{Any}
+end
+
+function DataLoaderIteratorState(iter::PrototypeDataLoader)
+    indices = []
+
+    # Creates list of loader indices in which they should be enumerated
+    for (i, loader) in enumerate(iter.problem_dataloaders)
+        append!(indices, [i for _ in 1:length(loader)])
+    end
+
+    indices = iter.shuffle ? Random.shuffle(indices) : indices
+    states = [nothing for _ in 1:length(iter.problem_dataloaders)]
+    return DataLoaderIteratorState(indices, states)
 end
 
 function Base.iterate(dataloader::PrototypeDataLoader, state::Union{DataLoaderIteratorState, Nothing}=nothing)
 
     if state === nothing
         # Start from the first dataloader
-        first_loader = dataloader.problem_dataloaders[1]
-        first_value, first_state = iterate(first_loader)
-        return first_value, DataLoaderIteratorState(1, first_state)
-    else
-        if !ispynull(state.current_loader_state[1])
-            # Continue from the current dataloader
-            next_value, next_loader_state = iterate(dataloader.problem_dataloaders[state.current_loader_index], state.current_loader_state)
-            # More data available in the current loader
+        state = DataLoaderIteratorState(dataloader)
+    end
 
-            return next_value, DataLoaderIteratorState(state.current_loader_index, next_loader_state)
-        elseif state.current_loader_index < length(dataloader.problem_dataloaders)
-            # Move to the next loader
-            next_loader_index = state.current_loader_index + 1
-            next_loader = dataloader.problem_dataloaders[next_loader_index]
-            first_value, first_state = iterate(next_loader)
-            return first_value, DataLoaderIteratorState(next_loader_index, first_state)
-        else
-            # No more dataloaders left
-            return nothing
-        end
+    # Stop if indices-to-be-enumerated is empty
+    if isempty(state.current_indices)
+        return nothing
+    end
+
+    loader_index = popfirst!(state.current_indices)
+
+    # was sub-iterator iterated already?
+    if isnothing(state.current_states[loader_index])
+        # Init iteration, and save state to state list
+        first_value, first_state = iterate(dataloader.problem_dataloaders[loader_index])
+
+        state.current_states[loader_index] = first_state
+
+        return first_value, state
+    else 
+        # Loader previous loader state, iterate, and update state
+        previous_state = state.current_states[loader_index]
+        loader_value, loader_state = iterate(dataloader.problem_dataloaders[loader_index], previous_state)
+
+        state.current_states[loader_index] = loader_state
+
+        return loader_value, state
     end 
 end

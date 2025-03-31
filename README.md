@@ -12,8 +12,8 @@ This module is separated in multiple sub-module, that take care of
 - learning, training, and evaluation in `learn.jl`, and
 - data loading and other useful things in `utils.jl`
 
-## Using PyCall
-`PyCall` is a package to communicate with Python code from inside Julia that we use to build our PyTorch modules. Hence, make sure to configure the desired Python binary path as follows from the project's Julia REPL:
+## Using PythonCall
+`PythonCall` is a package to communicate with Python code from inside Julia that we use to build our PyTorch modules. Hence, make sure to configure the desired Python binary path as follows from the project's Julia REPL:
 
 ```
 using Pkg
@@ -23,7 +23,7 @@ ENV["PYTHON"]="/home/d-oughnut/anaconda3/envs/prog_synth/bin/python"
 # And on Windows:
 ENV["PYTHON"] = raw"C:\Users\DOughnut\AppData\Local\Programs\Python\Python37-32\python.exe"
 
-Pkg.build(PyCall)
+Pkg.build(PythonCall)
 ```
 
 We recommend using Conda environments.

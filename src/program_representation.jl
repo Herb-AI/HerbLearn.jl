@@ -24,11 +24,8 @@ mutable struct StarEnCoderProgramEncoder <: AbstractStarCoderProgramEncoder
     encoder
     EMBED_DIM::Int
     batch_size::Int
-    max_sequence_length::Int
 
-    embedder
-
-    function StarEnCoderProgramEncoder(latent_dim::Union{Int, Nothing}=nothing, batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1)
+    function StarEnCoderProgramEncoder(batch_size::Int=128, hidden_state::Int=13)
         transformers = pyimport("transformers")
         device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
 
@@ -52,19 +49,12 @@ mutable struct StarEnCoderProgramEncoder <: AbstractStarCoderProgramEncoder
             encoder.resize_token_embeddings(length(tokenizer))
         end
 
+        encoder.eval()
+
         embed_dim = encoder.config.hidden_size
 
         encoder = torch.nn.DataParallel(encoder).to(device)
-
-        # if latent_dim==nothing, don't init and apply dimensionality reduction/embedding function
-        if isnothing(latent_dim)
-            embedder = (x->x)
-        else
-            embedder = MLP([embed_dim, latent_dim])
-            embed_dim = latent_dim
-        end
-
-        new(tokenizer, encoder, embed_dim, batch_size, max_sequence_length, embedder)
+        new(tokenizer, encoder, embed_dim, batch_size)
 
     end
 end
@@ -83,26 +73,28 @@ mutable struct StarCoderProgramEncoder <: AbstractStarCoderProgramEncoder
 
     embedder
 
-    function StarCoderProgramEncoder(latent_dim::Union{Int, Nothing}=nothing, batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1, model_path::AbstractString="")
+    function StarCoderProgramEncoder(latent_dim::Union{Int, Nothing}=nothing, batch_size::Int=128, max_sequence_length::Int=256, hidden_state::Int=1, model_path::AbstractString="", encoder=nothing)
         transformers = pyimport("transformers")
 
         checkpoint = "bigcode/starcoder"
         tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
 
-        if isempty(model_path)
-            encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto")  # load to GPUs
-        elseif endswith(model_path, '/') && !isdir(model_path)
-            # Load model if not existent
-            encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto") 
-            # Prune model to hidden state
-            encoder.h = torch.nn.ModuleList([layer for (i, layer) in enumerate(encoder.h) if i<hidden_state]) # in range 1 to 40
-            encoder.config.n_layer = hidden_state
+        if isnothing(encoder)
+            if isempty(model_path)
+                encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto")  # load to GPUs
+            elseif endswith(model_path, '/') && !isdir(model_path)
+                # Load model if not existent
+                encoder = transformers.AutoModel.from_pretrained(checkpoint, device_map = "auto") 
+                # Prune model to hidden state
+                encoder.h = torch.nn.ModuleList([layer for (i, layer) in enumerate(encoder.h) if i<hidden_state]) # in range 1 to 40
+                encoder.config.n_layer = hidden_state
 
-        elseif isdir(model_path)
-            # Load encoder from disk
-            encoder = transformers.AutoModel.from_pretrained(model_path, device_map = "auto")  # load to gpu from disk
-        else
-            throw(ArgumentError("Invalid model path selected. Make sure to select a directory."))
+            elseif isdir(model_path)
+                # Load encoder from disk
+                encoder = transformers.AutoModel.from_pretrained(model_path, device_map = "auto")  # load to gpu from disk
+            else
+                throw(ArgumentError("Invalid model path selected. Make sure to select a directory."))
+            end
         end
 
         for param in encoder.parameters() 
@@ -199,7 +191,7 @@ mutable struct StarCoder2ProgramEncoder <: AbstractStarCoderProgramEncoder
     end
 end
 
-
+#@TODO This is type piracy. Move this to HerbCore, or re-write
 HerbCore.get_rule(hole::Hole) = findfirst(hole.domain)
 
 """
@@ -209,8 +201,7 @@ function encode_programs(generated_problems::Vector{GeneratedProblem}, encoder::
     return_vec = []
     for gen_problem in ProgressBar(generated_problems)
         partial_programs = [tup[1] for tup in gen_problem.partial_programs]
-        # input_expr = [string(rulenode2expr(rulenode, gen_problem.grammar)) for rulenode ∈ partial_programs]
-        input_expr = ["" for rulenode ∈ partial_programs] # @TODO fix rulenode2expr
+        input_expr = [string(rulenode2expr(rulenode, gen_problem.grammar)) for rulenode ∈ partial_programs]
         push!(return_vec, encode_programs(input_expr, encoder))
     end
     return return_vec
@@ -229,7 +220,7 @@ end
 
 
 function encode_grammar(grammar::AbstractGrammar, encoder::AbstractProgramEncoder)
-    rules = [string(rule) for rule in grammar.rules]
+    rules = ["$type = $(rule)" for (type,rule) in zip(grammar.types, grammar.rules)]
     return encode_programs(rules, encoder)
 end
 
@@ -269,12 +260,16 @@ function encode_programs(programs::Vector{<:AbstractString}, encoder::AbstractSt
 
     @pywith torch.no_grad() begin
         for batch in data_batches
-            # tokenize string represenations
-            encoded_programs = encoder.tokenizer(batch, padding=true, truncation=true, return_tensors="pt").to(device)
-            encoded_programs = encoder.encoder(input_ids=encoded_programs["input_ids"], attention_mask=encoded_programs["attention_mask"])["hidden_states"][end].detach()
+            # Define begin-/end-of-sequence tokens
+            BOS_TOKEN = encoder.tokenizer.special_tokens_map["bos_token"]
+            EOS_TOKEN = encoder.tokenizer.special_tokens_map["eos_token"]
+                
+            # Add Start and End-of-sequence token to each input
+            batch = ["$BOS_TOKEN$sentence$EOS_TOKEN" for sentence in batch]
 
-            encoded_programs = encoded_programs.mean(dim=1)
+            encoded_programs = _encode(batch, encoder)
 
+            # encoded_programs = py"$(encoded_programs)[:, -1, :]"
             # encoded_programs = encoded_programs.view(encoded_programs.size(0), -1)
 
             push!(return_matrix, encoded_programs.cpu())
@@ -283,6 +278,36 @@ function encode_programs(programs::Vector{<:AbstractString}, encoder::AbstractSt
     end
     return torch.cat(return_matrix, dim=0) 
 end
+
+
+"""
+Largely copied from BigCode tutorials (https://github.com/bigcode-project/bigcode-encoder/blob/master/embedding_sandbox.ipynb).
+"""
+function _encode(input_strings::Vector{<:AbstractString}, encoder::StarEnCoderProgramEncoder) 
+    device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
+
+    encoded_inputs = encoder.tokenizer(input_strings, padding="longest", return_tensors="pt", pad_to_multiple_of=8).to(device) 
+
+    outputs = encoder.encoder(input_ids=encoded_inputs["input_ids"], attention_mask=encoded_inputs["attention_mask"])
+    embeddings = pool_and_normalize(outputs["hidden_states"][end], encoded_inputs["attention_mask"]).detach()
+
+    GC.gc(false)
+    return embeddings
+end
+
+function _encode(input_strings::Vector{<:AbstractString}, encoder::StarCoderProgramEncoder) 
+    error("Rewrite this to use a proper embedding function.")
+    device = torch.device(ifelse(torch.cuda.is_available(), "cuda", "cpu"))
+
+    encoded_inputs = encoder.tokenizer(input_strings, padding="longest", return_tensors="pt", pad_to_multiple_of=8).to(device) 
+
+    encoded_inputs = encoder.encoder(input_ids=encoded_inputs["input_ids"], attention_mask=encoded_inputs["attention_mask"])["last_hidden_state"].detach()
+
+    GC.gc(false)
+    return encoded_inputs
+end
+
+
 
 """
 
@@ -344,7 +369,7 @@ Function to generate labels in a DeepCoder fashion, i.e. mapping each program to
 function deepcoder_labels(gen_problems::Vector{GeneratedProblem})
     return_vec = []
     for gen_problem in gen_problems
-        push!(return_vec, torch.unsqueeze(deepcoder_labels_for_node(gen_problem.program, gen_problem.grammar), dim=0))
+        push!(return_vec, deepcoder_labels_for_node(gen_problem.program, gen_problem.grammar))
     end
     return return_vec
 end

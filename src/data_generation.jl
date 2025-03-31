@@ -16,7 +16,7 @@ function Base.iterate(iter::RandomSampler, state=nothing)
     grammar = HerbConstraints.get_grammar(iter.solver)
     start = get_starting_symbol(iter.solver)
     max_depth = get_max_depth(iter.solver)
-    for i in 1:1000000
+    for i in 1:100000
         h = rand(RuleNode, grammar, start, max_depth)
         # check whether hypothesis rulenode has minimum depth
         if !isnothing(iter.min_depth) && depth(h) < iter.min_depth
@@ -36,7 +36,9 @@ function Base.iterate(iter::RandomSampler, state=nothing)
 
         return h, nothing
     end
-    error("Too many samples had to be drawn. Maybe try another iterator instead.")
+    iter.max_depth = max_depth + 1
+
+    error("Too many samples had to be drawn. Maybe try another iterator or higher depth instead.")
 end
 
 
@@ -63,6 +65,7 @@ function generate_data(
     gen_IO_data = []
     for pair in ProgressBar(problem_grammar_pairs)
         problem, grammar = pair.problem, deepcopy(pair.grammar)
+        gen_programs = Set{RuleNode}()
 
         # discard longer examples
         if length(problem.spec) > 50
@@ -82,7 +85,7 @@ function generate_data(
 
         st = nothing
         if string(ben_module) != "HerbBenchmarks.String_transformations_2020"
-            st = SymbolTable(grammar)
+            st = grammar2symboltable(grammar)
         end
 
         i = 0
@@ -90,6 +93,10 @@ function generate_data(
             if !isnothing(min_depth) && depth(h) < min_depth
                 continue
             end
+            if h in gen_programs
+                continue
+            end
+
             expr = rulenode2expr(h, grammar)
 
             try
@@ -98,7 +105,6 @@ function generate_data(
                 if string(ben_module) == "HerbBenchmarks.String_transformations_2020"
                     outputs = [ben_module.interpret(h, grammar, ex) for ex in problem.spec]
                 else
-                    expr = rulenode2expr(h, grammar)
                     outputs = [execute_on_input(st, expr, ex.in) for ex in problem.spec]
                 end
 
@@ -112,7 +118,8 @@ function generate_data(
                 # Align inputs and generated outputs
                 for (example, output) in zip(problem.spec, outputs)
                     if length(string(output)) == 0 && typeof(output) == String
-                        output = "()"
+                        #@TODO allow empty strings to be generated?
+                        throw(BoundsError)
                     end
 
                     # Guard for too long string transformations
@@ -121,6 +128,7 @@ function generate_data(
                     end
 
                     io_example = IOExample(example.in, output)
+                    push!(gen_programs, h)
                     push!(io_examples, io_example)
                 end
                 # gen_problem = GeneratedProblem(io_examples, h, get_partial_programs([h], grammar, parts_per_program), grammar)
@@ -134,11 +142,6 @@ function generate_data(
             i += 1
             if i == num_samples
                 break
-            end
-
-            # Check stopping conditions
-            if check_enumerations && i > max_enumerations || check_time && time() - start_time > max_time
-                return nothing
             end
         end
     end
