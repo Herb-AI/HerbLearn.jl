@@ -88,13 +88,20 @@ function pretrain_heuristic(
         all_rule_grammar_encoding = semantic ? loaded_data["all_rule_grammar_encoding"] : nothing
     end
 
-    l = torch.arange(length(all_rule_grammar.rules))
-    all_rule_grammar_encoding = torch.nn.functional.one_hot(l).float()
-    println("length(all_rule_grammar):\t$(length(all_rule_grammar.rules))\t$(all_rule_grammar_encoding.shape)")
+    show_tensor(all_rule_grammar_encoding; prefix="Before")
+    #l = torch.arange(length(all_rule_grammar.rules))
+    #all_rule_grammar_encoding = torch.nn.functional.one_hot(l).float()
+    #println("length(all_rule_grammar):\t$(length(all_rule_grammar.rules))\t$(all_rule_grammar_encoding.shape)")
 
-    println("io_encodings.shape:\t$(io_encodings.shape)")
-    error()
-    
+    all_rule_grammar_encoding = all_but_the_top(all_rule_grammar_encoding; k_dim=7)
+    show_tensor(all_rule_grammar_encoding; prefix="After")
+
+    show_tensor(io_encodings; prefix="IO Before")
+    # io_encodings = z_score_norm(io_encodings)
+    io_encodings = all_but_the_top(io_encodings; k_dim=2)
+    io_encodings = z_score_norm(io_encodings)
+    show_tensor(io_encodings; prefix="IO After")
+
     label_size = sum([reduce(*, vec.size()) for vec in label_data])
     label_sum = sum([vec.sum() for vec in label_data])
     println("label_data.size(): ", label_size)
@@ -130,7 +137,7 @@ function pretrain_heuristic(
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-    weights = torch.tensor([label_sum/label_size, 1-label_sum/label_size]) 
+    weights = torch.tensor([1-label_sum/label_size, label_sum/label_size]) 
     println("weights:", weights)
     # loss_func = BCELoss_class_weighted(weights/weights.sum())
     loss_func = PairwiseRankingLoss()
@@ -192,23 +199,29 @@ function train!(model, train_dataloader::PrototypeDataLoader, valid_dataloader::
         accu_loss = 0
         num_samples = 0
 
-
         for (i, (io_emb, grammar_indices, y)) in enumerate(train_dataloader)
             batch_size = io_emb.size(0)
             (io_emb, grammar_indices, y) = io_emb.to(device), grammar_indices.to(device), y.to(device)
+
             grammar_indices = grammar_indices[1]
+            @show grammar_indices
 
             grammar_emb = all_rules_grammar_emb.index_select(0, grammar_indices)
 
             output = model(io_emb, grammar_emb)
-            println("\toutput.shape: $(output.shape)")
-            println("\t4: train!.output.min/max/mean: $(output.min())\t$(output.max())\t$(output.mean())")
+            # println("\toutput.shape: $(output.shape)")
+            show_tensor(output; prefix="train!.output")
             y = y.squeeze()
-            loss = loss_func(output, y).sum()
+
+            # println("output[1]:\t", output[1])
+
+            # println("y:\t", y.float())
+
+            loss = loss_func(output, y.float()).sum()
             accu_loss += loss.item()
             loss /= batch_size
 
-            if epoch % 200 == 0
+            if epoch % 50 == 0
                 println("pairs: $(y.sum(dim=1)),  $((1-y).sum(dim=1))")
                 println("data_length(train_dataloader): $(data_length(train_dataloader))")
 
@@ -224,11 +237,28 @@ function train!(model, train_dataloader::PrototypeDataLoader, valid_dataloader::
                 println("min_pos: $min_pos\tmin_val: $min_val")
                 println("max_neg: $max_neg\tmax_val: $max_val")
 
-                # error()
+                if false && sum(min_val < max_val).item() > 0
+                    println("-------------------")
+                    ind = (min_val < max_val).float().argmax().item() + 1 
+
+                    println("ind: ", ind)
+
+                    println("min_pos:", min_pos)
+                    println("max_neg:", max_neg)
+                    println("output[ind]:", output[ind])
+                    println("y[ind]:", y[ind])
+                    println("grammar_emb: ", grammar_emb)
+
+                    println("ind: ", ind)
+                    io_emb = io_emb[ind].view(1,-1)
+
+                    _ = model(io_emb, grammar_emb)
+
+                    error()
+                end
+
             end
-            println("all_rules_grammar_emb.shape: ", all_rules_grammar_emb.shape)
-
-
+            
             num_samples += batch_size
 
             optimizer.zero_grad()

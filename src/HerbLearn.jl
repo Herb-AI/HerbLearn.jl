@@ -1,85 +1,86 @@
 module HerbLearn
 
-using PyCall
+# --- standard library ---
 using Random
-Random.seed!(42);
-
 using Serialization
+using Statistics
+using LinearAlgebra: norm, dot
 
-using JLD
-using ProgressBars
-using CSV
-using DataFrames
+# --- ML ---
+using Flux
 
-const global torch = pyimport("torch")
-const global np = pyimport("numpy")
-const global nn = pyimport("torch.nn")
-const global metrics = pyimport("sklearn.metrics")
-
-function __init__()
-  copy!(torch, pyimport("torch"))
-  copy!(np, pyimport("numpy"))
-  copy!(nn, pyimport("torch.nn"))
-  copy!(metrics, pyimport("sklearn.metrics"))
-  
-  # reload Julia models during run-time
-  include(string(@__DIR__, "/models.jl"))
-end
-
+# --- Herb ecosystem ---
 using HerbCore
-using HerbConstraints
 using HerbGrammar
+using HerbConstraints
 using HerbInterpret
 using HerbSearch
 using HerbSpecification
-using HerbBenchmarks: ProblemGrammarPair
 
-include("data_generation.jl")
-include("data_representation.jl")
-include("models.jl")
-include("program_representation.jl")
-include("program_representation_utils.jl")
-include("data_loaders.jl")
+# =============================================================================
+# UniversE — a clean, modular reimplementation of the neurally-guided
+# synthesis pipeline:
+#
+#   embed (universal LLM-style embeddings, offline + cached)
+#     -> generate training data (sample programs, execute on inputs)
+#     -> learn a heuristic in Flux (predict likely rules from the spec)
+#     -> turn the heuristic into integer grammar-rule costs
+#     -> cost-based bottom-up search guided by those costs
+#
+# Each stage lives in its own file and is independently testable.
+# =============================================================================
 
-include("learn.jl")
-include("utils.jl")
+include("embedding.jl")
+include("encoding.jl")
+include("data.jl")
+include("model.jl")
+include("train.jl")
+include("costs.jl")
+include("pipeline.jl")
 
-export 
-  torch,
+export
+    # embedding
+    AbstractEmbedder,
+    HashEmbedder,
+    CachedEmbedder,
+    PrecomputedEmbedder,
+    embed,
+    embed_dim,
+    save_cache,
 
-  generate_data,
-  pretrain_heuristic,
+    # encoding
+    input_string,
+    embedding_strings,
+    embed_example,
+    embed_spec,
+    embed_rule,
+    embed_grammar,
 
-  GeneratedProblem,
-  ProblemGrammarPair,
+    # data generation
+    GeneratedExample,
+    rule_mask,
+    generate_examples,
 
-  AbstractIOEncoder,
-  AbstractStarCoderIOEncoder,
-  DeepCoderIOEncoder,
-  StarEnCoderIOEncoder,
-  StarCoderIOEncoder, 
-  StarCoder2IOEncoder,
-  PropertySignatureIOEncoder,
-  encode_IO_examples,
+    # model
+    UniversEModel,
+    cosine01,
+    predict_scores,
 
-  AbstractProgramEncoder,
-  ZeroProgramEncoder,
-  GraphProgramEncoder,
-  AbstractStarCoderProgramEncoder,
-  StarCoderProgramEncoder,
-  StarEnCoderProgramEncoder,
-  StarCoder2ProgramEncoder,
-  encode_programs,
-  encode_grammar,
-  embed_programs,
+    # training
+    TrainingDatum,
+    make_training_data,
+    pairwise_loss,
+    train!,
 
-  AbstractProgramDecoder,
-  decode_programs,
+    # costs
+    scores_to_costs,
+    assign_costs,
 
-  DerivationPredNet,
-  SemanticDerivationPredNet,
-  NonNNSemanticDerivationPredNet,
-  MLP,
+    # pipeline
+    UniversE,
+    fit_universe,
+    guided_costs,
+    search_with_costs,
+    solve
 
-  input_rules
-end #module HerbLearn
+end # module HerbLearn

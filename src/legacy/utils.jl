@@ -7,7 +7,7 @@ function BCELoss_class_weighted(weights)
     end
     function loss(input, target)
         input = torch.clamp(input,min=1e-7,max=1-1e-7)
-        bce = - weights[1] * target * torch.log(input) - (1 - target) * weights[0] * torch.log(1 - input)
+        bce = - weights[0] * target * torch.log(input) - (1 - target) * weights[2] * torch.log(1 - input)
         return torch.sum(bce)
     end
 
@@ -15,6 +15,11 @@ function BCELoss_class_weighted(weights)
 end
 
 function PairwiseRankingLoss(margin=0.5)
+    # Shift origin of both activation function up and right
+    # Invert pos_weighting in both x and y
+    pos_weighting(x) = 0.5+margin/2 - torch.nn.functional.leaky_relu(-x + 0.5 + margin/2)
+    neg_weighting(x) = 0.5-margin/2 + torch.nn.functional.leaky_relu(x - 0.5 + margin/2)
+
     function loss(preds, target)
         target = target.squeeze()
 
@@ -26,8 +31,11 @@ function PairwiseRankingLoss(margin=0.5)
 
         # Following contrastive loss of 
         # https://github.com/UKPLab/sentence-transformers/blob/839e58ac826fef6a6875f689633be8a883f5dec6/sentence_transformers/losses/ContrastiveLoss.py#L102
-        pw_diff = pos_preds + torch.nn.functional.relu(margin - neg_preds) # pairwise diff
+
+        pw_diff = pos_weighting(pos_preds) + neg_weighting(neg_preds) # pairwise diff
+        # pw_diff = pos_preds + torch.nn.functional.relu(margin - neg_preds) # pairwise diff
         # pw_diff = pos_preds - neg_preds # pairwise diff
+
         pw_diff = (pw_diff * target.unsqueeze(2) * (1-target.unsqueeze(1)))
 
         # println("non-zero indices: ", (pw_diff > 0).nonzero(as_tuple=false) + 1)
@@ -158,3 +166,67 @@ end
 
 cos_mat(vec) = torch.nn.functional.cosine_similarity(vec.unsqueeze(1), vec.unsqueeze(0), dim=2)
 l_mat(vec, p=1.0) = torch.cdist(vec, vec, p=p)/length(vec[1])
+
+function pca_projection(X_mat, k_dim=100)
+    # Make X_centered of shape (N x D) zero-mean embeddings
+    X_centered = X_mat - X_mat.mean(dim=0, keepdim=true)
+    cov = torch.matmul(X_centered.T, X_centered) / (X_centered.shape[1] - 1)  # covariance matrix (D x D)
+    # Compute eigenvalues and eigenvectors of covariance
+    e_vals, e_vecs = torch.linalg.eigh(cov)  # eigenvalues in ascending order
+    # Sort eigenvalues descending and sort eigenvectors correspondingly
+    e_vals, idx = torch.sort(e_vals, descending=true)
+
+    idx = torch.index_select(idx, 0, torch.arange(k_dim))
+    e_vecs = torch.index_select(e_vecs, 1, idx)
+
+    # Project data onto PCA basis (full rotation)
+    X_pca = torch.matmul(X_centered, e_vecs)
+
+    return X_pca
+end
+
+function mean_center(X_mat)
+    mean_vec = X_mat.mean(dim=0, keepdim=true)
+    X_mat_centered = X_mat - mean_vec
+    return X_mat_centered
+end
+
+function z_score_norm(X_mat)
+    # Compute per-dimension mean and std
+    mean_vec = X_mat.mean(dim=0)
+    std_vec = X_mat.std(dim=0)  # by default, unbiased (N-1 in denom)
+
+    return (X_mat - mean_vec) / (std_vec + 1e-8)
+end
+
+"""
+    
+X_mat: input matrix to reduce
+k_dim: number of top components to remove (often 1 to 3 in practice)
+"""
+function all_but_the_top(X_mat; k_dim=1)
+    # Make X_centered of shape (N x D) zero-mean embeddings
+    X_centered = X_mat - X_mat.mean(dim=0, keepdim=true)
+    cov = torch.matmul(X_centered.T, X_centered) / (X_centered.shape[1] - 1)  # covariance matrix (D x D)
+    # Compute eigenvalues and eigenvectors of covariance
+    e_vals, e_vecs = torch.linalg.eigh(cov)  # eigenvalues in ascending order
+    # Sort eigenvalues descending and sort eigenvectors correspondingly
+    e_vals, idx = torch.sort(e_vals, descending=true)
+
+    idx = torch.index_select(idx, 0, torch.arange(k_dim))
+    top_comps = torch.index_select(e_vecs, 1, idx)
+
+    # After computing e_vecs and e_vals via PCA (see above)
+    # Remove the projection of X_centered onto these top components
+    X_dominant_removed = X_centered - torch.matmul(torch.matmul(X_centered, top_comps), top_comps.T)
+
+    return X_dominant_removed
+end
+
+
+
+function show_tensor(vec; prefix::String="")
+    println("$prefix: vec.max/min/mean():\t$(format(vec.max()))\t$(format(vec.min()))\t$(format(vec.mean()))")
+end
+
+format(vec::PyObject) = round(vec.item(), digits=4)

@@ -40,6 +40,7 @@ end
             in_features = sizes[i]
             out_features = sizes[i+1]
             if i == length(sizes)-1
+                # Last layer
                 block = MLPBlock(in_features, out_features, false, false, 0.0, torch.nn.Identity)
             else 
                 block = MLPBlock(in_features, out_features, bias, layer_norm, dropout, activation)
@@ -138,8 +139,8 @@ end
     function __init__(self, num_IO_features::Int, grammar_dim, hidden_layer_sizes::Vector{Int}=[])
         pybuiltin(:super)(SemanticDerivationPredNet, self).__init__()
 
-        # output_dim = 768
-        output_dim = 32 #one-hot in all_rule_grammar
+        output_dim = 32
+        # output_dim = 32 #one-hot in all_rule_grammar
 
         println("num_IO_features: $num_IO_features\n \ngrammar_features: $grammar_dim")
 
@@ -147,29 +148,32 @@ end
         self.grammar_dim = grammar_dim
 
         # self.sizes = [[num_IO_features]; hidden_layer_sizes; grammar_dim]
-        self.sizes = [[num_IO_features]; [256, 256, 256, 256]; output_dim]
-        self.MLP = MLP(self.sizes; bias=false, layer_norm=false, dropout=0.0)
-        self.grammar_MLP = MLP([grammar_dim, 256, 256, 256, output_dim]; bias=false, dropout=0.0)
+        self.sizes = [num_IO_features; [256, 256]; output_dim]
+        self.MLP = MLP(self.sizes; bias=false, layer_norm=true, dropout=0.0)
+        self.grammar_MLP = MLP([grammar_dim, output_dim]; bias=true, dropout=0.0)
+
+        self.return_activation = torch.nn.GELU()
     end
 
     function forward(self, io_x, grammar_embeddings)
         batch_size = io_x.shape[1]
 
         cos_gremb = cos_mat(io_x)
-        # println("1: sem_model.forward.cos_x.min/max/mean: $(cos_gremb.min())\t$(cos_gremb.max())\t$(cos_gremb.mean())")
-        
         x = self.MLP(io_x)
+        x = x.tanh()
         # grammar_embeddings = self.grammar_MLP(grammar_embeddings)
 
-        x = x.tanh()
-        # grammar_embeddings = grammar_embeddings.tanh()
-
-        cos_gremb = cos_mat(grammar_embeddings)
-        # println("2: sem_model.forward.cos_gremb.min/max/mean: $(cos_gremb.min())\t$(cos_gremb.max())\t$(cos_gremb.mean())")
+        # cos_gremb = cos_mat(grammar_embeddings)
         cos_gremb = cos_mat(x)
-        println("3: sem_model.forward.cos_x.min/max/mean: $(cos_gremb.min())\t$(cos_gremb.max())\t$(cos_gremb.mean())")
-        
-        return (pairwise_cosine_sim(x, grammar_embeddings) + 1)/2
+        show_tensor(cos_gremb; prefix="After tanh: sem_model.forward.cos_x")
+
+        println("model.forward.x[1]", x[1])
+        println("model.forward.grammar_emb[1]", grammar_embeddings[1])
+        # ret_val = (pairwise_cosine_sim(x, grammar_embeddings) + 1)/2
+        ret_val = pairwise_cosine_sim(x, grammar_embeddings)
+        ret_val = self.return_activation(ret_val)
+        println("model.forward.ret_val[1]: ", ret_val[1])
+        return ret_val
    end
 end
 
