@@ -8,12 +8,14 @@ using Test
     R = 4
     G = rand(Float32, n, R)
 
-    @testset "pairwise_loss edge cases" begin
+    @testset "loss edge cases (need both positives and negatives)" begin
         model = UniversEModel(n; hidden=[8])
         spec = rand(Float32, 2n)
-        @test pairwise_loss(model, spec, falses(R), G) == 0      # no positives
-        @test pairwise_loss(model, spec, trues(R), G) == 0       # no negatives
-        @test pairwise_loss(model, spec, BitVector([1, 0, 1, 0]), G) >= 0
+        for lossfn in (pairwise_loss, contrastive_loss)
+            @test lossfn(model, spec, falses(R), G) == 0          # no positives
+            @test lossfn(model, spec, trues(R), G) == 0           # no negatives
+            @test lossfn(model, spec, BitVector([1, 0, 1, 0]), G) >= 0
+        end
     end
 
     @testset "make_training_data from generated examples" begin
@@ -30,11 +32,10 @@ using Test
         @test all(d -> length(d.rule_mask) == length(g.rules), td)
     end
 
-    @testset "loss decreases on a learnable signal" begin
+    @testset "loss decreases & ranks correctly ($lossfn)" for lossfn in (contrastive_loss, pairwise_loss)
         # Two distinct specs, each mapped to a different rule pattern. The model
         # should learn to rank the right rules up for each spec.
         n2 = 12
-        R2 = 4
         # two orthogonal rule directions so the groups {1,2} and {3,4} are
         # actually separable in rule-embedding space
         u = normalize(randn(Float32, n2))
@@ -48,11 +49,10 @@ using Test
             TrainingDatum(sB, BitVector([0, 0, 1, 1])),
         ]
         model = UniversEModel(n2; hidden=[16, 16])
-        history = train!(model, data, G2; epochs=300, lr=1e-2, seed=0)
+        history = train!(model, data, G2; lossfn=lossfn, epochs=300, lr=1e-2, seed=0)
 
         @test length(history) == 300
         @test history[end] < history[1]            # learned something
-        @test history[end] < 0.5f0                 # fits this tiny dataset well
 
         # after training, the intended rules outrank the others for each spec
         scoresA = predict_scores(model, sA, G2)

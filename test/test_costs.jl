@@ -19,6 +19,18 @@ using Test
         @test_throws ArgumentError scores_to_costs([0.5]; min_cost=0)
     end
 
+    @testset "tiebreak_costs: size_base dominates, rank tie-break" begin
+        scores = [0.9, 0.1, 0.5, 0.3]                 # ranks: 1, 4, 2, 3
+        c = tiebreak_costs(scores; size_base=100, levels=3)
+        @test c isa Vector{Int}
+        @test all(100 .<= c .<= 102)                  # every cost in [size_base, size_base+levels-1]
+        @test c[1] == 100                             # highest score -> cheapest adjustment
+        @test c[2] == maximum(c)                      # lowest score -> most expensive
+        # higher score never costs more than a lower one
+        @test issorted(c[sortperm(scores; rev=true)])
+        @test_throws ArgumentError tiebreak_costs([0.5]; size_base=0)
+    end
+
     @testset "assign_costs over a grammar" begin
         e = HashEmbedder(dim=16)
         g = @csgrammar begin

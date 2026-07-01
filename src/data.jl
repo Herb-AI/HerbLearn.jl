@@ -59,6 +59,8 @@ Keyword arguments:
 - `max_attempts::Int=100*num_programs` — give up after this many samples.
 - `seed::Union{Nothing,Int}=nothing` — if given, seeds the global RNG first so
   the sample is reproducible (HerbGrammar's sampler draws from the global RNG).
+- `mod::Module=Main` — module whose functions the grammar calls (pass a benchmark
+  module like `PBE_SLIA_Track_2019` so its `*_cvc` string functions resolve).
 
 Programs that error on any input (or produce `nothing`) are skipped.
 """
@@ -72,12 +74,15 @@ function generate_examples(
     exclude::Set{RuleNode}=Set{RuleNode}(),
     max_attempts::Integer=100 * num_programs,
     seed::Union{Nothing,Integer}=nothing,
+    mod::Module=Main,
 )::Vector{GeneratedExample}
 
     seed === nothing || Random.seed!(seed)
 
     n_rules = length(grammar.rules)
-    symtable = grammar2symboltable(grammar)
+    # `mod` is the module whose functions the grammar calls (e.g. a benchmark
+    # module like PBE_SLIA_Track_2019, which defines `concat_cvc`, `substr_cvc`, …).
+    symtable = grammar2symboltable(grammar, mod)
 
     out = GeneratedExample[]
     seen = Set{RuleNode}()

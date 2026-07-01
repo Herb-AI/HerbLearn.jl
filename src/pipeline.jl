@@ -49,6 +49,7 @@ function fit_universe(
     hidden::AbstractVector{<:Integer}=[64, 64],
     epochs::Integer=200,
     lr::Real=1e-3,
+    lossfn=contrastive_loss,
     seed::Union{Nothing,Integer}=nothing,
     verbose::Bool=false,
 )::UniversE
@@ -59,7 +60,7 @@ function fit_universe(
     data = make_training_data(embedder, generated)
     grammar_emb = embed_grammar(embedder, grammar)
     model = UniversEModel(embed_dim(embedder); hidden=hidden)
-    train!(model, data, grammar_emb; epochs=epochs, lr=lr, seed=seed, verbose=verbose)
+    train!(model, data, grammar_emb; lossfn=lossfn, epochs=epochs, lr=lr, seed=seed, verbose=verbose)
 
     return UniversE(embedder, model)
 end
@@ -90,8 +91,9 @@ function search_with_costs(
     max_cost::Integer=typemax(Int),
     max_programs::Integer=100_000,
     observational_equivalence::Bool=true,
+    mod::Module=Main,
 )
-    symtable = grammar2symboltable(grammar)
+    symtable = grammar2symboltable(grammar, mod)
     run_on(input, expr) = try
         execute_on_input(symtable, expr, input)
     catch

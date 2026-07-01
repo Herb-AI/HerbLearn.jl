@@ -70,10 +70,12 @@ export
     TrainingDatum,
     make_training_data,
     pairwise_loss,
+    contrastive_loss,
     train!,
 
     # costs
     scores_to_costs,
+    tiebreak_costs,
     assign_costs,
 
     # pipeline
