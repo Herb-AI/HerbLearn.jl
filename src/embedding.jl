@@ -1,9 +1,8 @@
 # =============================================================================
 # Embedders
 #
-# An embedder turns an arbitrary string into a fixed-size vector. This is the
-# "universal embedding function" f_e from the UniversE paper. Everything
-# downstream (spec/rule encoding, learning, costs) only ever sees the resulting
+# An embedder turns an arbitrary string into a fixed-size vector. Everything
+# downstream (spec encoding, learning, costs) only ever sees the resulting
 # `Vector{Float32}`, so the actual model that produces them is fully pluggable
 # and is computed *offline* (and cached). That keeps any heavy LLM completely
 # out of the learning/search hot path.
@@ -22,8 +21,8 @@
 
 Supertype for every embedding backend. A concrete embedder must implement:
 
-- `embed(e, s::AbstractString)::Vector{Float32}` — embed a single string.
-- `embed_dim(e)::Int` — the length of every vector `embed` returns.
+- `embed(e, s::AbstractString)::Vector{Float32}` -- embed a single string.
+- `embed_dim(e)::Int` -- the length of every vector `embed` returns.
 """
 abstract type AbstractEmbedder end
 
@@ -64,8 +63,8 @@ character n-grams. For every n-gram (n = 1..`ngram`) of the input string we
 hash it into one of `dim` buckets with a signed weight, then L2-normalise.
 
 This is deterministic, has no dependencies, and is fast enough to run inline.
-It captures *surface* compositional similarity for free — strings sharing
-substrings (e.g. `"concat"` and `"cat"`) land closer than unrelated strings —
+It captures *surface* compositional similarity for free -- strings sharing
+substrings (e.g. `"concat"` and `"cat"`) land closer than unrelated strings --
 which is enough to develop and test the whole pipeline offline. It does **not**
 capture deeper semantics (e.g. `"1" ≈ "0"`); a real LLM backend is needed for
 that, and drops in behind the same interface.
@@ -149,14 +148,14 @@ end
     PrecomputedEmbedder(table::Dict{String,Vector{Float32}}; fallback=nothing)
     PrecomputedEmbedder(path::AbstractString; fallback=nothing)
 
-An embedder that only *looks up* precomputed vectors — typically the cache file
+An embedder that only *looks up* precomputed vectors -- typically the cache file
 produced offline by a heavy LLM backend running in its own environment (see
 `examples/llm_env`). This is how an HF/Transformers.jl model is used without it
 ever being a dependency of the main pipeline: embed everything once, serialize a
 `String → Vector{Float32}` dict, then read it here.
 
 On a cache miss it falls back to `fallback` (another `AbstractEmbedder`) if one
-is given, otherwise it errors — which surfaces any string that was not embedded
+is given, otherwise it errors -- which surfaces any string that was not embedded
 ahead of time.
 """
 struct PrecomputedEmbedder{F} <: AbstractEmbedder

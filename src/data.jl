@@ -1,7 +1,7 @@
 # =============================================================================
 # Training-data generation.
 #
-# Following UniversE/DeepCoder/DreamCoder we learn from *generated* data: take
+# Following DeepCoder/DreamCoder we learn from *generated* data: take
 # the inputs of a problem, sample random programs from its grammar, execute them
 # on the inputs to obtain outputs, and record which rules the program used. Each
 # such (spec, program, rules-used) triple is one training example. The learned
@@ -52,14 +52,14 @@ Sample up to `num_programs` distinct programs from `grammar` and turn each into 
 argument `Dict`s, typically reused from a real problem's spec).
 
 Keyword arguments:
-- `start::Symbol=:Start` — start symbol to sample from.
-- `min_depth::Int=1`, `max_depth::Int=5` — depth bounds on sampled programs.
-- `exclude::Set{RuleNode}=Set{RuleNode}()` — programs never to emit (e.g. the
+- `start::Symbol=:Start` -- start symbol to sample from.
+- `min_depth::Int=1`, `max_depth::Int=5` -- depth bounds on sampled programs.
+- `exclude::Set{RuleNode}=Set{RuleNode}()` -- programs never to emit (e.g. the
   known solution, so generated data does not contain it).
-- `max_attempts::Int=100*num_programs` — give up after this many samples.
-- `seed::Union{Nothing,Int}=nothing` — if given, seeds the global RNG first so
+- `max_attempts::Int=100*num_programs` -- give up after this many samples.
+- `seed::Union{Nothing,Int}=nothing` -- if given, seeds the global RNG first so
   the sample is reproducible (HerbGrammar's sampler draws from the global RNG).
-- `mod::Module=Main` — module whose functions the grammar calls (pass a benchmark
+- `mod::Module=Main` -- module whose functions the grammar calls (pass a benchmark
   module like `PBE_SLIA_Track_2019` so its `*_cvc` string functions resolve).
 
 Programs that error on any input (or produce `nothing`) are skipped.

@@ -31,18 +31,4 @@ using Test
         @test_throws ArgumentError tiebreak_costs([0.5]; size_base=0)
     end
 
-    @testset "assign_costs over a grammar" begin
-        e = HashEmbedder(dim=16)
-        g = @csgrammar begin
-            Start = "x"
-            Start = s
-            Start = Start * Start
-        end
-        model = UniversEModel(embed_dim(e); hidden=[8])
-        spec = [IOExample(Dict(:s => "a"), "ax")]
-        costs = assign_costs(model, e, g, spec; min_cost=1, scale=10)
-        @test length(costs) == length(g.rules)
-        @test costs isa Vector{Int}
-        @test all(costs .>= 1)
-    end
 end

@@ -1,15 +1,14 @@
 # =============================================================================
 # Encoding specifications and grammar rules with an embedder.
 #
-# This is the "Embedding specifications and rules" part of UniversE:
-#
 #   - an input/output pair  (i, o)  ->  f_e(i) ⊕ f_e(o)   ∈ ℝ^{2n}
 #   - a set of examples E (a spec)  ->  mean over pairs    ∈ ℝ^{2n}   (deep set,
 #                                       so the encoding is order-invariant)
 #   - a grammar rule r              ->  f_e(str(r))        ∈ ℝ^{n}
 #
-# The spec lives in ℝ^{2n} and rules in ℝ^{n}; the learned model maps between
-# them (see model.jl).
+# The rule embeddings (embed_rule / embed_grammar) are the starting point for
+# heuristics that read the grammar as an input instead of hard-wiring it into
+# their output layer -- an open direction, kept here for experiments.
 # =============================================================================
 
 """
@@ -37,7 +36,7 @@ end
     embed_spec(e, examples::AbstractVector{<:IOExample})::Vector{Float32}
 
 Embed a whole specification (a set of examples) as the mean of the per-example
-embeddings — a deep set, hence invariant to the order of the examples. Returns
+embeddings -- a deep set, hence invariant to the order of the examples. Returns
 a vector of length `2 * embed_dim(e)`. An empty spec yields the zero vector.
 """
 function embed_spec(e::AbstractEmbedder, examples::AbstractVector{<:IOExample})::Vector{Float32}

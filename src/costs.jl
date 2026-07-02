@@ -36,13 +36,13 @@ size**. Every rule costs `size_base` plus a small adjustment in `0:levels-1` set
 by the rule's score *rank* (cheapest adjustment = highest score). Because
 `size_base` dominates the total per-program adjustment, the cost-based search
 enumerates by size first and the heuristic only re-orders programs of *equal*
-size — so a wrong ranking can shuffle within a size bucket but can never deepen
+size -- so a wrong ranking can shuffle within a size bucket but can never deepen
 the solution.
 
 This is what makes a weak/unreliable heuristic safe to use. Empirically on
 SyGuS-SLIA it gives the same speedup as a "hard" score-proportional cost
-(`scores_to_costs`) — median ≈0.78× the programs of an unguided search, winning
-on most problems — while the worst case stays ≈1.0× (it essentially never hurts),
+(`scores_to_costs`) -- median ≈0.78× the programs of an unguided search, winning
+on most problems -- while the worst case stays ≈1.0× (it essentially never hurts),
 whereas hard costs blow up the search 25×+ when the heuristic mis-ranks a needed
 rule.
 
@@ -61,25 +61,3 @@ function tiebreak_costs(scores::AbstractVector{<:Real}; size_base::Integer=100, 
     return costs
 end
 
-"""
-    assign_costs(model, embedder, grammar, spec; min_cost=1, scale=10) -> Vector{Int}
-
-Compute integer costs for every rule of `grammar`, conditioned on the
-specification `spec` (a vector of `IOExample`s): embed the spec, embed the rules,
-score each rule with `model`, then convert scores to costs with `scores_to_costs`.
-The returned vector aligns with `grammar.rules` and is ready to hand to the
-cost-based bottom-up iterator.
-"""
-function assign_costs(
-    model::UniversEModel,
-    embedder::AbstractEmbedder,
-    grammar::AbstractGrammar,
-    spec::AbstractVector{<:IOExample};
-    min_cost::Integer=1,
-    scale::Integer=10,
-)::Vector{Int}
-    spec_emb = embed_spec(embedder, spec)
-    grammar_emb = embed_grammar(embedder, grammar)
-    scores = predict_scores(model, spec_emb, grammar_emb)
-    return scores_to_costs(scores; min_cost=min_cost, scale=scale)
-end
